@@ -13,7 +13,7 @@ class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"Bot is alive!")
+        self.wfile.write(b"Bot is alive and running smoothly!")
 
 def run_server():
     port = int(os.environ.get("PORT", 10000))
@@ -38,7 +38,7 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# --- Data Storage ---
+# --- Data Storage (Thread-Safe Structure) ---
 material_files = defaultdict(list)
 user_current_section = {}
 pending_files = {}
@@ -56,17 +56,17 @@ SECTION_NAMES = {
 }
 
 DUAS_LIST = (
-    "✨ **10 Beautiful Supplications** ✨\n\n"
-    "1. ربنا آتنا في الدنيا حسنة وفي الآخرة حسنة وقنا عذاب النار\n"
-    "2. لا إله إلا أنت سبحانك إني كنت من الظالمين\n"
-    "3. اللهم إنك عفو كريم تحب العفو فاعفُ عني\n"
-    "4. يا حي يا قيوم برحمتك أستغيث أصلح لي شأني كله\n"
-    "5. رب اشرح لي صدري ويسر لي أمري\n"
-    "6. اللهم لا سهل إلا ما جعلته سهلاً وأنت تجعل الحزن إذا شئت سهلاً\n"
-    "7. حسبي الله لا إله إلا هو عليه توكلت وهو رب العرش العظيم\n"
-    "8. اللهم إني أسألك علماً نافعاً ورزقاً طيباً وعملاً متقبلاً\n"
-    "9. سبحان الله وبحمده، سبحان الله العظيم\n"
-    "10. استغفر الله العظيم وأتوب إليه"
+    "✨ **10 Beautiful Supplications & Azkar** ✨\n\n"
+    "1. رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً وَفِي الْآخِرَةِ حَسَنَةً وَقِنَا عَذَابَ النَّارِ.\n"
+    "2. لَا إِلَهَ إِلَّا أَنْتَ سُبْحَانَكَ إِنِّي كُنْتُ مِنَ الظَّالِمِينَ.\n"
+    "3. اللَّهُمَّ إِنَّكَ عَفُوٌّ كَرِيمٌ تُحِبُّ الْعَفْوَ فَاعْفُ عَنِّي.\n"
+    "4. يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ.\n"
+    "5. رَبِّ اشْرَحْ لِي صَدْرِي وَيَسِّرْ لِي أَمْرِي.\n"
+    "6. اللَّهُمَّ لَا سَهْلَ إِلَّا مَا جَعَلْتَهُ سَهْلاً، وَأَنْتَ تَجْعَلُ الْحَزْنَ إِذَا شِئْتَ سَهْلاً.\n"
+    "7. حَسْبِي اللَّهُ لَا إِلَهَ إِلَّا هُوَ عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ الْعَرْشِ الْعَظِيمِ.\n"
+    "8. اللَّهُمَّ إِنِّى أَسْأَلُكَ عِلْماً نَافِعاً، وَرِزْقاً طَيِّباً، وَعَمَلاً مُتَقَبَّلاً.\n"
+    "9. سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.\n"
+    "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -84,8 +84,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     welcome_text = (
         f"Welcome {user_name} to your final school year!\n"
-        f"🎓 **Senior 27 | Al Falah Academy | MBZ** 🎓\n\n"
-        "Please choose a section from the menu below:"
+        f"🎓 **Senior 27 | Al Falah Academy | MBZ** 🇦🇪"
     )
     
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
@@ -97,7 +96,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if data == "batch_badge":
-        await query.message.reply_text("🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪")
+        await query.message.reply_text("🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪")
         return
 
     if data.startswith("sec_"):
@@ -105,7 +104,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if sec_key == "ai_assistant":
             user_current_section[user_id] = "ai_assistant"
-            await query.message.reply_text("🤖 **AI Assistant Mode Active**\nAsk me any academic question and I will help you immediately!")
+            await query.message.reply_text(
+                "🤖 **AI Assistant Mode Active**\n\n"
+                "You can now ask me any academic or general question, and I will help you immediately! (Type your question directly)"
+            )
             return
 
         if sec_key == "duas":
@@ -186,39 +188,49 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
                 target_file = files_list[file_index]
                 await update.message.reply_document(
                     document=target_file['file_id'],
-                    caption=f"📄 {target_file['title']}\n\n🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪"
+                    caption=f"📄 {target_file['title']}\n\n🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪"
                 )
                 return
 
     if user_current_section.get(user_id) == "ai_assistant":
         try:
-            await context.bot.send_chat_action(chat_id=user_id, action="typing")
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
             
-            def get_ai_response():
+            def call_ai():
                 response = client.chat.completions.create(
                     model="openai/gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a highly intelligent academic assistant for Al Falah Academy Senior 27 students. Be concise and helpful."},
+                        {
+                            "role": "system", 
+                            "content": (
+                                "You are an advanced, helpful academic AI assistant for 'Senior 27' students at Al Falah Academy, MBZ. "
+                                "Provide clear, accurate, and concise answers to help students with their studies."
+                            )
+                        },
                         {"role": "user", "content": text}
                     ],
-                    timeout=25
+                    temperature=0.7,
+                    max_tokens=1000,
+                    timeout=30
                 )
                 return response.choices[0].message.content
 
-            ai_reply = await asyncio.to_thread(get_ai_response)
+            ai_reply = await asyncio.to_thread(call_ai)
             await update.message.reply_text(ai_reply)
+            
         except Exception as e:
-            logging.error(f"AI Error: {e}")
-            await update.message.reply_text("⚠️ System busy. Please try again in a few seconds!")
+            logging.error(f"AI Error for user {user_id}: {e}")
+            await update.message.reply_text("⚠️ The AI service is currently experiencing high load. Please try again in a few moments!")
         return
 
-    await update.message.reply_text("Please use /start to access the main menu.")
+    await update.message.reply_text("Please use /start to open the main menu.")
 
 def main():
     if not TELEGRAM_TOKEN:
         print("Error: TELEGRAM_TOKEN not found!")
         return
 
+    # إنشاء التطبيق مع تحسينات الأداء والتعامل مع الضغط العالي
     application = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
@@ -231,7 +243,7 @@ def main():
     application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO, handle_incoming_files))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_messages))
 
-    print("🚀 Bot started with High-Efficiency Mode...")
+    print("🚀 Bot started successfully with High-Performance & Concurrency Mode...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
