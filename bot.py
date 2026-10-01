@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from openai import OpenAI
 
-# خادم وهمي لترضية منصة Render
+# خادم وهمي لترضية منصة Render وفتح الـ Port
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -143,16 +143,14 @@ def main():
 
     print("تم بدء تشغيل البوت المطور بنجاح والاستماع للطلبات...")
     
-    # التشغيل الآمن المتوافق مع حلقة الأحداث
+    # حل جذري ومضمون لإنشاء حلقة الأحداث للنسخ الحديثة
     try:
         loop = asyncio.get_event_loop()
-        if loop.is_running():
-            application.run_polling()
-        else:
-            asyncio.set_event_loop(loop)
-            application.run_polling()
-    except Exception:
-        application.run_polling()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    application.run_polling(close_loop=False)
 
 if __name__ == '__main__':
     main()
