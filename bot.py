@@ -35,7 +35,7 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# هيكلة تخزين الملفات لكل مادة لتتبعها بدقة
+# تخزين الملفات لكل مادة
 material_files = {
     "islamic": [],
     "arabic": [],
@@ -47,18 +47,31 @@ material_files = {
     "ai_assistant": []
 }
 
-# لتتبع القسم الحالي الذي يتصفحه كل مستخدم (لمعرفة الملف عند إرسال الرقم)
+# لتتبع القسم الذي يتصفحه الطالب للتحميل بالأرقام
 user_current_section = {}
+
+# مؤقت لحفظ بيانات الملف المؤقت قبل اختيار القسم من قبل المشرف
+pending_files = {}
+
+SECTION_NAMES = {
+    "islamic": "التربية الإسلامية",
+    "arabic": "اللغة العربية",
+    "math": "الرياضيات",
+    "english": "اللغة الإنجليزية",
+    "chemistry": "الكيمياء",
+    "biology": "الأحياء",
+    "physics": "الفيزياء"
+}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     
     keyboard = [
-        [InlineKeyboardButton("التربية الإسلامية", callback_data="islamic"), InlineKeyboardButton("اللغة العربية", callback_data="arabic")],
-        [InlineKeyboardButton("الرياضيات", callback_data="math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="english")],
-        [InlineKeyboardButton("الكيمياء", callback_data="chemistry"), InlineKeyboardButton("الأحياء", callback_data="biology")],
-        [InlineKeyboardButton("الفيزياء", callback_data="physics")],
-        [InlineKeyboardButton("المساعد الذكي 🤖", callback_data="ai_assistant")]
+        [InlineKeyboardButton("التربية الإسلامية", callback_data="sec_islamic"), InlineKeyboardButton("اللغة العربية", callback_data="sec_arabic")],
+        [InlineKeyboardButton("الرياضيات", callback_data="sec_math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="sec_english")],
+        [InlineKeyboardButton("الكيمياء", callback_data="sec_chemistry"), InlineKeyboardButton("الأحياء", callback_data="sec_biology")],
+        [InlineKeyboardButton("الفيزياء", callback_data="sec_physics")],
+        [InlineKeyboardButton("المساعد الذكي 🤖", callback_data="sec_ai_assistant")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -78,92 +91,90 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    if data == "ai_assistant":
-        user_current_section[user_id] = "ai_assistant"
-        await query.message.reply_text("مرحباً بك في قسم **المساعد الذكي**. أرسل لي أي سؤال أكاديمي وسأقوم بمساعدتك فوراً!")
+    # 1. إذا كان الضغط لاختيار قسم لعرض الملفات
+    if data.startswith("sec_"):
+        sec_key = data.replace("sec_", "")
+        if sec_key == "ai_assistant":
+            user_current_section[user_id] = "ai_assistant"
+            await query.message.reply_text("مرحباً بك في قسم **المساعد الذكي**. أرسل لي أي سؤال أكاديمي وسأقوم بمساعدتك فوراً!")
+            return
+
+        user_current_section[user_id] = sec_key
+        files_list = material_files.get(sec_key, [])
+        
+        if not files_list:
+            await query.message.reply_text(f"عذراً، لا توجد ملفات مرفوعة في قسم ({SECTION_NAMES.get(sec_key, sec_key)}) حتى الآن. 📚")
+            return
+
+        response_text = f"📂 **قائمة ملفات قسم ({SECTION_NAMES.get(sec_key, sec_key)})**:\n\n"
+        for idx, f_item in enumerate(files_list, 1):
+            response_text += f"{idx}. {f_item['title']}\n"
+        
+        response_text += "\nلتحميل أي ملف، أرسل رقمه مباشرة في الشات."
+        await query.message.reply_text(response_text, parse_mode="Markdown")
         return
 
-    # حفظ القسم الذي يتصفحه المستخدم حالياً
-    user_current_section[user_id] = data
+    # 2. إذا كان الضغط لتصنيف ملف جديد أرسله المشرف
+    if data.startswith("assign_"):
+        parts = data.split("_", 2)
+        target_sec = parts[1]
+        file_token = parts[2]
 
-    files_list = material_files.get(data, [])
-    if not files_list:
-        await query.message.reply_text("عذراً، لا توجد ملفات مرفوعة في هذا القسم حتى الآن. ترقبها قريباً! 📚")
+        file_data = pending_files.get(file_token)
+        if not file_data:
+            await query.message.edit_text("❌ انتهت صلاحية هذا الطلب أو تم تسجيل الملف مسبقاً.")
+            return
+
+        material_files[target_sec].append({
+            "title": file_data["title"],
+            "file_id": file_data["file_id"]
+        })
+
+        del pending_files[file_token]
+
+        await query.message.edit_text(
+            f"✅ **تم حفظ الملف بنجاح!**\n"
+            f"📌 العنوان: {file_data['title']}\n"
+            f"📂 القسم: {SECTION_NAMES.get(target_sec, target_sec)}"
+        )
         return
 
-    section_names = {
-        "islamic": "التربية الإسلامية",
-        "arabic": "اللغة العربية",
-        "math": "الرياضيات",
-        "english": "اللغة الإنجليزية",
-        "chemistry": "الكيمياء",
-        "biology": "الأحياء",
-        "physics": "الفيزياء"
-    }
-
-    response_text = f"📂 **قائمة ملفات قسم ({section_names.get(data, data)})**:\n\n"
-    for idx, f_item in enumerate(files_list, 1):
-        response_text += f"{idx}. {f_item['title']}\n"
-    
-    response_text += "\nلتحميل أي ملف، أرسل رقمه مباشرة في العرض."
-    await query.message.reply_text(response_text, parse_mode="Markdown")
-
-async def handle_channel_or_admin_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.channel_post or update.message
     if not message:
         return
 
-    chat_id = message.chat_id
     if message.document or message.video or message.audio:
-        caption = message.caption or message.document.file_name if message.document else "ملف تعليمي بدون عنوان"
+        caption = message.caption or (message.document.file_name if message.document else "ملف تعليمي بدون عنوان")
         file_id = message.document.file_id if message.document else (message.video.file_id if message.video else message.audio.file_id)
         
-        # تصنيف دقيق جداً بناءً على الكلمات المفتاحية في الوصف أو اسم الملف
-        lower_cap = caption.lower()
-        assigned_category = None
-
-        if any(w in lower_cap for w in ["اسلام", "إسلام", "islam", "ديني", "قرآن", "شرعي"]):
-            assigned_category = "islamic"
-        elif any(w in lower_cap for w in ["عرب", "arabic", "لغة عربية", "نحو", "بلاغة", "مقدمة"]):
-            assigned_category = "arabic"
-        elif any(w in lower_cap for w in ["رياضيات", "math", "رياضيات", "جبر", "هندسة", "حساب"]):
-            assigned_category = "math"
-        elif any(w in lower_cap for w in ["إنجليز", "انجلير", "english", "eng"]):
-            assigned_category = "english"
-        elif any(w in lower_cap for w in ["كيمياء", "chem", "كيميا"]):
-            assigned_category = "chemistry"
-        elif any(w in lower_cap for w in ["أحياء", "احياء", "bio", "biology"]):
-            assigned_category = "biology"
-        elif any(w in lower_cap for w in ["فيزياء", "فيزيا", "phys", "physics"]):
-            assigned_category = "physics"
-        else:
-            assigned_category = "math" # افتراضي إن لم يجد كلمة مفتاحية واضحة
-
-        material_files[assigned_category].append({
+        # إنشاء مفتاح فريد لهذا الملف المؤقت
+        file_token = str(len(pending_files) + 1000)
+        pending_files[file_token] = {
             "title": caption,
             "file_id": file_id
-        })
-
-        section_names = {
-            "islamic": "التربية الإسلامية",
-            "arabic": "اللغة العربية",
-            "math": "الرياضيات",
-            "english": "اللغة الإنجليزية",
-            "chemistry": "الكيمياء",
-            "biology": "الأحياء",
-            "physics": "الفيزياء"
         }
 
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"✅ تم سحب الملف بنجاح وإضافته إلى قسم ({section_names.get(assigned_category, assigned_category)}) في البوت الأساسي!"
+        # إرسال أزرار اختيار القسم للمشرف بدلاً من التخمين العشوائي
+        keyboard = [
+            [InlineKeyboardButton("الرياضيات 📐", callback_data=f"assign_math_{file_token}"), InlineKeyboardButton("اللغة العربية 📚", callback_data=f"assign_arabic_{file_token}")],
+            [InlineKeyboardButton("اللغة الإنجليزية 🔤", callback_data=f"assign_english_{file_token}"), InlineKeyboardButton("الفيزياء ⚡", callback_data=f"assign_physics_{file_token}")],
+            [InlineKeyboardButton("الكيمياء 🧪", callback_data=f"assign_chemistry_{file_token}"), InlineKeyboardButton("الأحياء 🧬", callback_data=f"assign_biology_{file_token}")],
+            [InlineKeyboardButton("التربية الإسلامية ☪️", callback_data=f"assign_islamic_{file_token}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await message.reply_text(
+            f"📥 **تم استلام الملف:** {caption}\n\n"
+            f"رجاءً، اختر القسم الصحيح الذي تريد وضع هذا الملف فيه:",
+            reply_markup=reply_markup
         )
 
 async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     user_id = update.message.from_user.id
 
-    # التحقق إذا كان المستخدم كتب رقماً للتحميل وكان داخل قسم معين
+    # التحقق من إرسال رقم لتحميل ملف
     if text.isdigit():
         current_sec = user_current_section.get(user_id)
         if current_sec and current_sec in material_files:
@@ -177,10 +188,10 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
                 )
                 return
             else:
-                await update.message.reply_text("❌ الرقم الذي أرسلته غير موجود في القائمة. تأكد من الرقم الصحيح.")
+                await update.message.reply_text("❌ الرقم الذي أرسلته غير موجود في القائمة.")
                 return
 
-    # إذا كان في قسم المساعد الذكي
+    # دعم قسم المساعد الذكي
     if user_current_section.get(user_id) == "ai_assistant":
         try:
             response = client.chat.completions.create(
@@ -192,7 +203,7 @@ async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYP
             )
             ai_reply = response.choices[0].message.content
             await update.message.reply_text(ai_reply)
-        except Exception as e:
+        except Exception:
             await update.message.reply_text("عذراً، حدث خطأ أثناء الاتصال بالمساعد الذكي. حاول مرة أخرى لاحقاً.")
         return
 
@@ -203,14 +214,20 @@ def main():
         print("خطأ: لم يتم العثور على TELEGRAM_TOKEN في متغيرات البيئة!")
         return
 
-    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    # إعدادات متقدمة لتحمل ضغط أعداد كبيرة من المستخدمين في نفس اللحظة بدون تعطل
+    application = (
+        ApplicationBuilder()
+        .token(TELEGRAM_TOKEN)
+        .concurrent_updates(True)
+        .build()
+    )
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO, handle_channel_or_admin_files))
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO, handle_incoming_files))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_messages))
 
-    print("تم بدء تشغيل البوت المطور بنجاح والاستماع للطلبات...")
+    print("تم بدء تشغيل البوت المطور بنجاح وبأقصى أداء متزامن...")
     
     try:
         loop = asyncio.get_event_loop()
