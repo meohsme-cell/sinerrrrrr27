@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from openai import OpenAI
 
-# إعداد خادم وهمي لترضية منصة Render وفتح الـ Port
+# خادم وهمي لترضية منصة Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -35,8 +35,6 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# قاعدة بيانات مؤقتة لتخزين الملفات حسب المواد
-# هيكلة التخزين: { "math": [{"title": "درس الدوال", "file_id": "..."}], ... }
 material_files = {
     "islamic": [],
     "arabic": [],
@@ -51,7 +49,6 @@ material_files = {
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
     
-    # بناء أزرار القائمة للمواد والمساعد الذكي
     keyboard = [
         [InlineKeyboardButton("التربية الإسلامية", callback_data="islamic"), InlineKeyboardButton("اللغة العربية", callback_data="arabic")],
         [InlineKeyboardButton("الرياضيات", callback_data="math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="english")],
@@ -71,7 +68,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
 
-# التعامل مع الضغط على أزرار القائمة
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -86,7 +82,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("عذراً، لا توجد ملفات مرفوعة في هذا القسم حتى الآن. ترقبها قريباً! 📚")
         return
 
-    # عرض جدول الملفات المرقمة
     response_text = f"📂 **قائمة ملفات قسم ({data.upper()})**:\n\n"
     for idx, f_item in enumerate(files_list, 1):
         response_text += f"{idx}. {f_item['title']}\n"
@@ -94,20 +89,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response_text += "\nلتحميل أي ملف، أرسل رقمه أو اضغط عليه مباشرة."
     await query.message.reply_text(response_text, parse_mode="Markdown")
 
-# استقبال الملفات تلقائياً من القناة الثانية أو الأدممنة وتصنيفها
 async def handle_channel_or_admin_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.channel_post or update.message
     if not message:
         return
 
-    # التحقق إن كانت الرسالة من القناة المستهدفة أو تحتوي على ملفات
     chat_id = message.chat_id
     if message.document or message.video or message.audio:
         caption = message.caption or "ملف تعليمي بدون عنوان"
         file_id = message.document.file_id if message.document else (message.video.file_id if message.video else message.audio.file_id)
         
-        # تصنيف تلقائي بسيط بناءً على الكلمات المفتاحية في الوصف (Caption)
-        assigned_category = "math" # افتراضي
+        assigned_category = "math"
         lower_cap = caption.lower()
         if "اسلام" in lower_cap or "islamic" in lower_cap:
             assigned_category = "islamic"
@@ -129,16 +121,12 @@ async def handle_channel_or_admin_files(update: Update, context: ContextTypes.DE
             "file_id": file_id
         })
 
-        # إرسال إشعار بأنه تمت الإضافة للبوت الأساسي
-        if chat_id == TARGET_CHANNEL_ID or True:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"✅ تم سحب الملف بنجاح وإضافته إلى قسم ({assigned_category}) في البوت الأساسي!"
-            )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"✅ تم سحب الملف بنجاح وإضافته إلى قسم ({assigned_category}) في البوت الأساسي!"
+        )
 
 async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    # إذا أرسل المستخدم رقماً، يمكننا برمجياً إرسال الملف المرتبط به (اختياري حسب الطلب)
     await update.message.reply_text("استلمت رسالتك. استخدم الأمر /start لعرض قائمة المواد الدراسية.")
 
 def main():
@@ -154,7 +142,17 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_messages))
 
     print("تم بدء تشغيل البوت المطور بنجاح والاستماع للطلبات...")
-    application.run_polling()
+    
+    # التشغيل الآمن المتوافق مع حلقة الأحداث
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            application.run_polling()
+        else:
+            asyncio.set_event_loop(loop)
+            application.run_polling()
+    except Exception:
+        application.run_polling()
 
 if __name__ == '__main__':
     main()
