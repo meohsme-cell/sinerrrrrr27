@@ -29,14 +29,14 @@ init_db()
 def add_material_to_db(section, title, file_id):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (?, ?, ?)", (section, title, file_id))
+    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (?, ?, ?)", (section.strip().lower(), title, file_id))
     conn.commit()
     conn.close()
 
 def get_materials_from_db(section):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, file_id FROM materials WHERE section = ?", (section,))
+    cursor.execute("SELECT title, file_id FROM materials WHERE section = ?", (section.strip().lower(),))
     rows = cursor.fetchall()
     conn.close()
     return [{"title": row[0], "file_id": row[1]} for row in rows]
@@ -65,7 +65,6 @@ logging.basicConfig(
 )
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TARGET_CHANNEL_ID = -1004332814800
 
 user_current_section = {}
 pending_files = {}
@@ -127,7 +126,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("sec_"):
-        sec_key = data.replace("sec_", "")
+        sec_key = data.replace("sec_", "").strip().lower()
         
         if sec_key == "duas":
             await query.message.reply_text(DUAS_LIST, parse_mode="Markdown")
@@ -150,7 +149,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("assign_"):
         parts = data.split("_", 2)
-        target_sec = parts[1]
+        target_sec = parts[1].strip().lower()
         file_token = parts[2]
 
         file_data = pending_files.get(file_token)
@@ -158,9 +157,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("❌ انتهت صلاحية هذا الطلب أو تم تسجيل الملف مسبقاً.")
             return
 
-        # حفظ الملف في قاعدة البيانات الدائمة
+        # حفظ الملف في قاعدة البيانات مع توحيد الصيغة
         add_material_to_db(target_sec, file_data["title"], file_data["file_id"])
-
         del pending_files[file_token]
 
         await query.message.edit_text(
