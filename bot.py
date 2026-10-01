@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from openai import OpenAI
 
-# خادم وهمي لترضية منصة Render وفتح الـ Port
+# خادم وهمي لترضية منصة Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -35,6 +35,7 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
+# هيكلة تخزين الملفات لكل مادة لتتبعها بدقة
 material_files = {
     "islamic": [],
     "arabic": [],
@@ -45,6 +46,9 @@ material_files = {
     "physics": [],
     "ai_assistant": []
 }
+
+# لتتبع القسم الحالي الذي يتصفحه كل مستخدم (لمعرفة الملف عند إرسال الرقم)
+user_current_section = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
@@ -72,21 +76,36 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
 
     if data == "ai_assistant":
+        user_current_section[user_id] = "ai_assistant"
         await query.message.reply_text("مرحباً بك في قسم **المساعد الذكي**. أرسل لي أي سؤال أكاديمي وسأقوم بمساعدتك فوراً!")
         return
+
+    # حفظ القسم الذي يتصفحه المستخدم حالياً
+    user_current_section[user_id] = data
 
     files_list = material_files.get(data, [])
     if not files_list:
         await query.message.reply_text("عذراً، لا توجد ملفات مرفوعة في هذا القسم حتى الآن. ترقبها قريباً! 📚")
         return
 
-    response_text = f"📂 **قائمة ملفات قسم ({data.upper()})**:\n\n"
+    section_names = {
+        "islamic": "التربية الإسلامية",
+        "arabic": "اللغة العربية",
+        "math": "الرياضيات",
+        "english": "اللغة الإنجليزية",
+        "chemistry": "الكيمياء",
+        "biology": "الأحياء",
+        "physics": "الفيزياء"
+    }
+
+    response_text = f"📂 **قائمة ملفات قسم ({section_names.get(data, data)})**:\n\n"
     for idx, f_item in enumerate(files_list, 1):
         response_text += f"{idx}. {f_item['title']}\n"
     
-    response_text += "\nلتحميل أي ملف، أرسل رقمه أو اضغط عليه مباشرة."
+    response_text += "\nلتحميل أي ملف، أرسل رقمه مباشرة في العرض."
     await query.message.reply_text(response_text, parse_mode="Markdown")
 
 async def handle_channel_or_admin_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,37 +115,87 @@ async def handle_channel_or_admin_files(update: Update, context: ContextTypes.DE
 
     chat_id = message.chat_id
     if message.document or message.video or message.audio:
-        caption = message.caption or "ملف تعليمي بدون عنوان"
+        caption = message.caption or message.document.file_name if message.document else "ملف تعليمي بدون عنوان"
         file_id = message.document.file_id if message.document else (message.video.file_id if message.video else message.audio.file_id)
         
-        assigned_category = "math"
+        # تصنيف دقيق جداً بناءً على الكلمات المفتاحية في الوصف أو اسم الملف
         lower_cap = caption.lower()
-        if "اسلام" in lower_cap or "islamic" in lower_cap:
+        assigned_category = None
+
+        if any(w in lower_cap for w in ["اسلام", "إسلام", "islam", "ديني", "قرآن", "شرعي"]):
             assigned_category = "islamic"
-        elif "عرب" in lower_cap or "arabic" in lower_cap:
+        elif any(w in lower_cap for w in ["عرب", "arabic", "لغة عربية", "نحو", "بلاغة", "مقدمة"]):
             assigned_category = "arabic"
-        elif "رياضيات" in lower_cap or "math" in lower_cap:
+        elif any(w in lower_cap for w in ["رياضيات", "math", "رياضيات", "جبر", "هندسة", "حساب"]):
             assigned_category = "math"
-        elif "إنجليز" in lower_cap or "english" in lower_cap:
+        elif any(w in lower_cap for w in ["إنجليز", "انجلير", "english", "eng"]):
             assigned_category = "english"
-        elif "كيمياء" in lower_cap or "chem" in lower_cap:
+        elif any(w in lower_cap for w in ["كيمياء", "chem", "كيميا"]):
             assigned_category = "chemistry"
-        elif "أحياء" in lower_cap or "bio" in lower_cap:
+        elif any(w in lower_cap for w in ["أحياء", "احياء", "bio", "biology"]):
             assigned_category = "biology"
-        elif "فيزياء" in lower_cap or "phys" in lower_cap:
+        elif any(w in lower_cap for w in ["فيزياء", "فيزيا", "phys", "physics"]):
             assigned_category = "physics"
+        else:
+            assigned_category = "math" # افتراضي إن لم يجد كلمة مفتاحية واضحة
 
         material_files[assigned_category].append({
             "title": caption,
             "file_id": file_id
         })
 
+        section_names = {
+            "islamic": "التربية الإسلامية",
+            "arabic": "اللغة العربية",
+            "math": "الرياضيات",
+            "english": "اللغة الإنجليزية",
+            "chemistry": "الكيمياء",
+            "biology": "الأحياء",
+            "physics": "الفيزياء"
+        }
+
         await context.bot.send_message(
             chat_id=chat_id,
-            text=f"✅ تم سحب الملف بنجاح وإضافته إلى قسم ({assigned_category}) في البوت الأساسي!"
+            text=f"✅ تم سحب الملف بنجاح وإضافته إلى قسم ({section_names.get(assigned_category, assigned_category)}) في البوت الأساسي!"
         )
 
 async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.message.from_user.id
+
+    # التحقق إذا كان المستخدم كتب رقماً للتحميل وكان داخل قسم معين
+    if text.isdigit():
+        current_sec = user_current_section.get(user_id)
+        if current_sec and current_sec in material_files:
+            file_index = int(text) - 1
+            files_list = material_files[current_sec]
+            if 0 <= file_index < len(files_list):
+                target_file = files_list[file_index]
+                await update.message.reply_document(
+                    document=target_file['file_id'],
+                    caption=f"📄 {target_file['title']}\n\n🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪"
+                )
+                return
+            else:
+                await update.message.reply_text("❌ الرقم الذي أرسلته غير موجود في القائمة. تأكد من الرقم الصحيح.")
+                return
+
+    # إذا كان في قسم المساعد الذكي
+    if user_current_section.get(user_id) == "ai_assistant":
+        try:
+            response = client.chat.completions.create(
+                model="openai/gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "أنت مساعد أكاديمي ذكي لطلاب أكاديمية الفلاح دفعة 27."},
+                    {"role": "user", "content": text}
+                ]
+            )
+            ai_reply = response.choices[0].message.content
+            await update.message.reply_text(ai_reply)
+        except Exception as e:
+            await update.message.reply_text("عذراً، حدث خطأ أثناء الاتصال بالمساعد الذكي. حاول مرة أخرى لاحقاً.")
+        return
+
     await update.message.reply_text("استلمت رسالتك. استخدم الأمر /start لعرض قائمة المواد الدراسية.")
 
 def main():
@@ -143,7 +212,6 @@ def main():
 
     print("تم بدء تشغيل البوت المطور بنجاح والاستماع للطلبات...")
     
-    # حل جذري ومضمون لإنشاء حلقة الأحداث للنسخ الحديثة
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
