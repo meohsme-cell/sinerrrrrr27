@@ -38,16 +38,22 @@ def main():
         print("خطأ: لم يتم العثور على TELEGRAM_TOKEN في متغيرات البيئة!")
         return
 
-    # إنشاء التطبيق
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    # بناء التطبيق
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
 
     print("تم بدء تشغيل البوت بنجاح ويقوم بالاستماع الآن...")
     
-    # التشغيل الآمن المتوافق مع Render والنسخ الحديثة
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # التشغيل اليدوي لحلقة الأحداث لتجنب مشاكل Thread
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
