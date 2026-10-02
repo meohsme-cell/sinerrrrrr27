@@ -42,10 +42,10 @@ def get_materials_from_db(section):
         sec = "arabic"
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, file_id FROM materials WHERE section = ?", (sec,))
+    cursor.execute("SELECT id, title, file_id FROM materials WHERE section = ?", (sec,))
     rows = cursor.fetchall()
     conn.close()
-    return [{"title": row[0], "file_id": row[1]} for row in rows]
+    return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
 
 # خادم وهمي لترضية منصة Render ودعم طلبات GET و HEAD
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -72,7 +72,6 @@ logging.basicConfig(
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-user_current_section = {}
 pending_files = {}
 
 SECTION_NAMES = {
@@ -125,7 +124,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    user_id = query.from_user.id
 
     if data == "batch_badge":
         await query.message.reply_text("🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪")
@@ -140,34 +138,42 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(DUAS_LIST, parse_mode="Markdown")
             return
 
-        user_current_section[user_id] = sec_key
         files_list = get_materials_from_db(sec_key)
         
         if not files_list:
             await query.message.reply_text(f"عذراً، لا توجد ملفات مرفوعة في قسم ({SECTION_NAMES.get(sec_key, sec_key)}) حتى الآن. 📚")
             return
 
-        # بناء القائمة بشكل آمن يمنع تجاوز الحد الأقصى لطول الرسالة في تيليجرام
-        response_text = f"📂 **قائمة ملفات قسم ({SECTION_NAMES.get(sec_key, sec_key)})**:\n\n"
-        chunks = []
-        current_chunk = response_text
+        # إنشاء أزرار لكل ملف بشكل منظم وآمن تماماً ضد التعليق
+        keyboard = []
+        for f_item in files_list:
+            # جعل اسم الزر يحتوي على عنوان الملف
+            keyboard.append([InlineKeyboardButton(f"📄 {f_item['title']}", callback_data=f"getfile_{f_item['id']}")])
 
-        for idx, f_item in enumerate(files_list, 1):
-            line = f"{idx}. {f_item['title']}\n"
-            if len(current_chunk) + len(line) > 3800:
-                chunks.append(current_chunk)
-                current_chunk = line
-            else:
-                current_chunk += line
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text(
+            f"📂 **قائمة ملفات قسم ({SECTION_NAMES.get(sec_key, sec_key)})**:\nاضغط على الملف لتنزيله فوراً:",
+            reply_markup=reply_markup,
+            parse_mode="Markdown"
+        )
+        return
 
-        if current_chunk:
-            chunks.append(current_chunk)
+    if data.startswith("getfile_"):
+        file_id_db = int(data.replace("getfile_", ""))
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT title, file_id FROM materials WHERE id = ?", (file_id_db,))
+        row = cursor.fetchone()
+        conn.close()
 
-        # إرسال الأجزاء تباعاً إذا كانت الرسالة طويلة جداً
-        for i, chunk in enumerate(chunks):
-            if i == len(chunks) - 1:
-                chunk += "\nلتحميل أي ملف، أرسل رقمه مباشرة في الشات."
-            await query.message.reply_text(chunk, parse_mode="Markdown")
+        if row:
+            title, file_id = row
+            await query.message.reply_document(
+                document=file_id,
+                caption=f"📄 {title}\n\n🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪"
+            )
+        else:
+            await query.message.reply_text("❌ عذراً، هذا الملف لم يعد متوفراً.")
         return
 
     if data.startswith("assign_"):
@@ -222,28 +228,6 @@ async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=reply_markup
         )
 
-async def handle_text_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    user_id = update.message.from_user.id
-
-    if text.isdigit():
-        current_sec = user_current_section.get(user_id)
-        if current_sec:
-            files_list = get_materials_from_db(current_sec)
-            file_index = int(text) - 1
-            if 0 <= file_index < len(files_list):
-                target_file = files_list[file_index]
-                await update.message.reply_document(
-                    document=target_file['file_id'],
-                    caption=f"📄 {target_file['title']}\n\n🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪"
-                )
-                return
-            else:
-                await update.message.reply_text("❌ الرقم الذي أرسلته غير موجود في قائمة هذا القسم.")
-                return
-
-    await update.message.reply_text("استلمت رسالتك. استخدم الأمر /start لعرض القائمة الرئيسية والمواد الدراسية.")
-
 def main():
     if not TELEGRAM_TOKEN:
         print("خطأ: لم يتم العثور على TELEGRAM_TOKEN في متغيرات البيئة!")
@@ -259,9 +243,8 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO, handle_incoming_files))
-    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_messages))
 
-    print("تم بدء تشغيل البوت مع قاعدة البيانات الدائمة بنجاح...")
+    print("تم بدء تشغيل البوت مع الأزرار التفاعلية بنجاح...")
     
     try:
         loop = asyncio.get_event_loop()
