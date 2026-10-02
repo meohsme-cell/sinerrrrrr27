@@ -27,16 +27,22 @@ def init_db():
 init_db()
 
 def add_material_to_db(section, title, file_id):
+    sec = section.strip().lower()
+    if sec in ["arabic", "اللغة العربية", "عربي"]:
+        sec = "arabic"
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (?, ?, ?)", (section.strip().lower(), title, file_id))
+    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (?, ?, ?)", (sec, title, file_id))
     conn.commit()
     conn.close()
 
 def get_materials_from_db(section):
+    sec = section.strip().lower()
+    if sec in ["arabic", "اللغة العربية", "عربي"]:
+        sec = "arabic"
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT title, file_id FROM materials WHERE section = ?", (section.strip().lower(),))
+    cursor.execute("SELECT title, file_id FROM materials WHERE section = ?", (sec,))
     rows = cursor.fetchall()
     conn.close()
     return [{"title": row[0], "file_id": row[1]} for row in rows]
@@ -83,16 +89,16 @@ SECTION_NAMES = {
 
 DUAS_LIST = (
     "✨ **10 أذكار وأدعية مباركة** ✨\n\n"
-    "1. رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً وَفِي الْآخِرَةِ حَسَنَةً وَقِنَا عَذَابَ النَّارِ.\n"
-    "2. لَا إِلَهَ إِلَّا أَنْتَ سُبْحَانَكَ إِنِّي كُنْتُ مِنَ الظَّالِمِينَ.\n"
-    "3. اللَّهُمَّ إِنَّكَ عَفُوٌّ كَرِيمٌ تُحِبُّ الْعَفْوَ فَاعْفُ عَنِّي.\n"
-    "4. يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ.\n"
-    "5. رَبِّ اشْرَحْ لِي صَدْرِي وَيَسِّرْ لِي أَمْرِي.\n"
-    "6. اللَّهُمَّ لَا سَهْلَ إِلَّا مَا جَعلتَهُ سَهْلاً، وَأَنْتَ تَجْعَلُ الْحَزْنَ إِذَا شِئْتَ سَهْلاً.\n"
-    "7. حَسْبِي اللَّهُ لَا إِلَهَ إِلَّا هُوَ عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ الْعَرْشِ الْعَظِيمِ.\n"
-    "8. اللَّهُمَّ إِنِّى أَسْأَلُكَ عِلْماً نَافِعاً، وَرِزْقاً طَيِّباً، وَعَمَلاً مُتَقَبَّلاً.\n"
-    "9. سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.\n"
-    "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
+    "1. رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً وَفِي الْآخِرَةِ حَسَنَةً وَقِنَا عَذَابَ النَّارِ.\n"
+    "2. لَا إِلَهَ إِلَّا أَنْتَ سُبْحَانَكَ إِنِّي كُنْتُ مِنَ الظَّالِمِينَ.\n"
+    "3. اللَّهُمَّ إِنَّكَ عَفُوٌّ كَرِيمٌ تُحِبُّ الْعَفْوَ فَاعْفُ عَنِّي.\n"
+    "4. يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ.\n"
+    "5. رَبِّ اشْرَحْ لِي صَدْرِي وَيَسِّرْ لِي أَمْرِي.\n"
+    "6. اللَّهُمَّ لَا سَهْلَ إِلَّا مَا جَعلتَهُ سَهْلاً، وَأَنْتَ تَجْعَلُ الْحَزْنَ إِذَا شِئْتَ سَهْلاً.\n"
+    "7. حَسْبِي اللَّهُ لَا إِلَهَ إِلَّا هُوَ عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ الْعَرْشِ الْعَظِيمِ.\n"
+    "8. اللَّهُمَّ إِنِّى أَسْأَلُكَ عِلْماً نَافِعاً، وَرِزْقاً طَيِّباً، وَعَمَلاً مُتَقَبَّلاً.\n"
+    "9. سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.\n"
+    "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,6 +133,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("sec_"):
         sec_key = data.replace("sec_", "").strip().lower()
+        if sec_key in ["arabic", "اللغة العربية", "عربي"]:
+            sec_key = "arabic"
         
         if sec_key == "duas":
             await query.message.reply_text(DUAS_LIST, parse_mode="Markdown")
@@ -150,6 +158,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("assign_"):
         parts = data.split("_", 2)
         target_sec = parts[1].strip().lower()
+        if target_sec in ["arabic", "اللغة العربية", "عربي"]:
+            target_sec = "arabic"
+            
         file_token = parts[2]
 
         file_data = pending_files.get(file_token)
@@ -157,7 +168,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("❌ انتهت صلاحية هذا الطلب أو تم تسجيل الملف مسبقاً.")
             return
 
-        # حفظ الملف في قاعدة البيانات مع توحيد الصيغة
         add_material_to_db(target_sec, file_data["title"], file_data["file_id"])
         del pending_files[file_token]
 
@@ -224,7 +234,7 @@ def main():
         print("خطأ: لم يتم العثور على TELEGRAM_TOKEN في متغيرات البيئة!")
         return
 
-    application = (
+    Application = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
         .concurrent_updates(True)
