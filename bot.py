@@ -147,12 +147,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"عذراً، لا توجد ملفات مرفوعة في قسم ({SECTION_NAMES.get(sec_key, sec_key)}) حتى الآن. 📚")
             return
 
+        # بناء القائمة بشكل آمن يمنع تجاوز الحد الأقصى لطول الرسالة في تيليجرام
         response_text = f"📂 **قائمة ملفات قسم ({SECTION_NAMES.get(sec_key, sec_key)})**:\n\n"
+        chunks = []
+        current_chunk = response_text
+
         for idx, f_item in enumerate(files_list, 1):
-            response_text += f"{idx}. {f_item['title']}\n"
-        
-        response_text += "\nلتحميل أي ملف، أرسل رقمه مباشرة في الشات."
-        await query.message.reply_text(response_text, parse_mode="Markdown")
+            line = f"{idx}. {f_item['title']}\n"
+            if len(current_chunk) + len(line) > 3800:
+                chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk += line
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        # إرسال الأجزاء تباعاً إذا كانت الرسالة طويلة جداً
+        for i, chunk in enumerate(chunks):
+            if i == len(chunks) - 1:
+                chunk += "\nلتحميل أي ملف، أرسل رقمه مباشرة في الشات."
+            await query.message.reply_text(chunk, parse_mode="Markdown")
         return
 
     if data.startswith("assign_"):
@@ -234,7 +249,7 @@ def main():
         print("خطأ: لم يتم العثور على TELEGRAM_TOKEN في متغيرات البيئة!")
         return
 
-    Application = (
+    application = (
         ApplicationBuilder()
         .token(TELEGRAM_TOKEN)
         .concurrent_updates(True)
