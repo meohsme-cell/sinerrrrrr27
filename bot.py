@@ -25,12 +25,10 @@ SECRET_ADMIN_KEY = "mpol90mpol90@555 fl"
 def get_db():
     if not DATABASE_URL:
         return None
-    # إضافة مهلة زمنية للاتصال 5 ثوانٍ لمنع تعليق البوت
     return psycopg2.connect(DATABASE_URL, connect_timeout=5)
 
 def init_db():
     if not DATABASE_URL:
-        print("⚠️ DATABASE_URL غير معرف في متغيرات البيئة!")
         return
     try:
         conn = get_db()
@@ -218,11 +216,10 @@ async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error saving log: {e}")
 
-# --- 5. أوامر البوت العامة (قائمة المواد للجميع) ---
+# --- 5. أوامر البوت العامة (عرض قائمة المواد دائماً للجميع) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "طالب"
     
-    # القائمة الرئيسية تظهر دائماً للجميع (حتى للأدمن)
     keyboard = [
         [InlineKeyboardButton("التربية الإسلامية", callback_data="sec_islamic"), InlineKeyboardButton("اللغة العربية", callback_data="sec_arabic")],
         [InlineKeyboardButton("الرياضيات", callback_data="sec_math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="sec_english")],
@@ -351,7 +348,7 @@ async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=reply_markup
         )
 
-# --- 6. لوحة تحكم المشرف (تظهر فقط عند كتابة /admin أو /stats أو كلمة السر) ---
+# --- 6. لوحة تحكم المشرف (تظهر فقط للآيدي 1329113404 عند طلب /admin أو /stats) ---
 async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -366,8 +363,7 @@ async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 /stats - لعرض الإحصائيات وعدد المستخدمين والملفات\n"
             "👥 /users - لعرض قائمة حسابات جميع من استخدم البوت\n"
             "📜 /user_logs ID - لرؤية كل رسائل وتفاعلات شخص معين\n"
-            "🗑 /delete - لعرض وتحديد الملفات لحذفها من البوت\n\n"
-            "📌 أمثلة: /delete 5 أو /user_logs 1329113404"
+            "🗑 /delete - لعرض وتحديد الملفات لحذفها من البوت"
         )
         await update.message.reply_text(admin_panel)
 
