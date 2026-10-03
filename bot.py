@@ -23,77 +23,99 @@ ADMIN_ID = 1329113404
 SECRET_ADMIN_KEY = "mpol90mpol90@555 fl"
 
 def get_db():
-    return psycopg2.connect(DATABASE_URL)
+    if not DATABASE_URL:
+        return None
+    # إضافة مهلة زمنية للاتصال 5 ثوانٍ لمنع تعليق البوت
+    return psycopg2.connect(DATABASE_URL, connect_timeout=5)
 
 def init_db():
     if not DATABASE_URL:
-        print("⚠️️ DATABASE_URL غير معرف في متغيرات البيئة!")
+        print("⚠️ DATABASE_URL غير معرف في متغيرات البيئة!")
         return
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS materials (
-            id SERIAL PRIMARY KEY,
-            section TEXT,
-            title TEXT,
-            file_id TEXT
-        );
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_logs (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            username TEXT,
-            full_name TEXT,
-            msg_type TEXT,
-            content TEXT,
-            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    ''')
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        conn = get_db()
+        if not conn:
+            return
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS materials (
+                id SERIAL PRIMARY KEY,
+                section TEXT,
+                title TEXT,
+                file_id TEXT
+            );
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_logs (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                username TEXT,
+                full_name TEXT,
+                msg_type TEXT,
+                content TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Error initializing database: {e}")
 
 try:
     init_db()
 except Exception as e:
-    print(f"Error initializing database: {e}")
+    print(f"Database Init Error: {e}")
 
 # --- 2. دوال التعامل مع قاعدة البيانات ---
 def add_material_to_db(section, title, file_id):
     sec = section.strip().lower()
     if sec in ["arabic", "اللغة العربية", "عربي"]:
         sec = "arabic"
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (%s, %s, %s)", (sec, title, file_id))
-    conn.commit()
-    cursor.close()
-    conn.close()
+    try:
+        conn = get_db()
+        if not conn: return
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (%s, %s, %s)", (sec, title, file_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"Error adding material: {e}")
 
 def get_materials_from_db(section):
     sec = section.strip().lower()
     if sec in ["arabic", "اللغة العربية", "عربي"]:
         sec = "arabic"
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, title, file_id FROM materials WHERE section = %s", (sec,))
-    rows = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
+    try:
+        conn = get_db()
+        if not conn: return []
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, file_id FROM materials WHERE section = %s", (sec,))
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting materials: {e}")
+        return []
 
 def delete_material_from_db(file_id):
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM materials WHERE id = %s", (file_id,))
-    deleted = cursor.rowcount > 0
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return deleted
+    try:
+        conn = get_db()
+        if not conn: return False
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM materials WHERE id = %s", (file_id,))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return deleted
+    except Exception as e:
+        logging.error(f"Error deleting material: {e}")
+        return False
 
-# --- 3. خادم السيرفر لـ Render (Keep-Alive) ---
+# --- 3. خادم السيرفر لـ Render ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -145,7 +167,7 @@ DUAS_LIST = (
     "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
 
-# --- 4. تسجيل جميع الحركات تلقائياً في السحابة ---
+# --- 4. تسجيل الحركات في الخلفية بشكل آمن ---
 async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not DATABASE_URL:
@@ -177,28 +199,30 @@ async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             content = f"🎵 [صوت: {msg.audio.title or 'مقطع'}]"
         else:
             msg_type = "other"
-            content = f"📌 [محتوى آخر]"
+            content = "📌 [محتوى آخر]"
     elif update.callback_query:
         msg_type = "button_click"
         content = f"🔘 ضغط زر: {update.callback_query.data}"
 
     try:
         conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO user_logs (user_id, username, full_name, msg_type, content)
-            VALUES (%s, %s, %s, %s, %s)
-        ''', (user_id, username, full_name, msg_type, content))
-        conn.commit()
-        cursor.close()
-        conn.close()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_logs (user_id, username, full_name, msg_type, content)
+                VALUES (%s, %s, %s, %s, %s)
+            ''', (user_id, username, full_name, msg_type, content))
+            conn.commit()
+            cursor.close()
+            conn.close()
     except Exception as e:
         logging.error(f"Error saving log: {e}")
 
-# --- 5. أوامر البوت للطلاب والواجهة ---
+# --- 5. أوامر البوت العامة (قائمة المواد للجميع) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name or "طالب"
     
+    # القائمة الرئيسية تظهر دائماً للجميع (حتى للأدمن)
     keyboard = [
         [InlineKeyboardButton("التربية الإسلامية", callback_data="sec_islamic"), InlineKeyboardButton("اللغة العربية", callback_data="sec_arabic")],
         [InlineKeyboardButton("الرياضيات", callback_data="sec_math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="sec_english")],
@@ -253,21 +277,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("getfile_"):
         file_id_db = int(data.replace("getfile_", ""))
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT title, file_id FROM materials WHERE id = %s", (file_id_db,))
-        row = cursor.fetchone()
-        cursor.close()
-        conn.close()
+        try:
+            conn = get_db()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT title, file_id FROM materials WHERE id = %s", (file_id_db,))
+                row = cursor.fetchone()
+                cursor.close()
+                conn.close()
 
-        if row:
-            title, file_id = row
-            await query.message.reply_document(
-                document=file_id,
-                caption=f"📄 {title}\n\n🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪"
-            )
-        else:
-            await query.message.reply_text("❌ عذراً، هذا الملف لم يعد متوفراً.")
+                if row:
+                    title, file_id = row
+                    await query.message.reply_document(
+                        document=file_id,
+                        caption=f"📄 {title}\n\n🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪"
+                    )
+                    return
+        except Exception as e:
+            logging.error(f"Error fetching file: {e}")
+
+        await query.message.reply_text("❌ عذراً، هذا الملف لم يعد متوفراً.")
         return
 
     if data.startswith("assign_"):
@@ -322,7 +351,7 @@ async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=reply_markup
         )
 
-# --- 6. لوحة تحكم المشرف (الأدمن) ---
+# --- 6. لوحة تحكم المشرف (تظهر فقط عند كتابة /admin أو /stats أو كلمة السر) ---
 async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -332,8 +361,8 @@ async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == SECRET_ADMIN_KEY and user_id == ADMIN_ID:
         admin_panel = (
-            "🔐 مرحباً بك يا مدير البوت! تم التفعيل بنجاح.\n\n"
-            "إليك الأوامر الخاصة بك فقط (مربوطة بالسحابة الدائمة):\n\n"
+            "🔐 مرحباً بك يا مدير البوت!\n\n"
+            "إليك الأوامر الخاصة بك فقط:\n\n"
             "📊 /stats - لعرض الإحصائيات وعدد المستخدمين والملفات\n"
             "👥 /users - لعرض قائمة حسابات جميع من استخدم البوت\n"
             "📜 /user_logs ID - لرؤية كل رسائل وتفاعلات شخص معين\n"
@@ -341,6 +370,18 @@ async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📌 أمثلة: /delete 5 أو /user_logs 1329113404"
         )
         await update.message.reply_text(admin_panel)
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    admin_panel = (
+        "🔐 لوحة تحكم الأدمن:\n\n"
+        "📊 /stats - إحصائيات البوت\n"
+        "👥 /users - قائمة المستخدمين\n"
+        "📜 /user_logs ID - سجل تفاعلات مستخدم\n"
+        "🗑 /delete - حذف ملف من البوت"
+    )
+    await update.message.reply_text(admin_panel)
 
 async def delete_file_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -356,47 +397,57 @@ async def delete_file_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         except ValueError:
             await update.message.reply_text("❌ يرجى إدخال رقم ID صحيح.")
     else:
-        conn = get_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, section, title FROM materials ORDER BY id DESC")
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
+        try:
+            conn = get_db()
+            if not conn: return
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, section, title FROM materials ORDER BY id DESC")
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
 
-        if not rows:
-            await update.message.reply_text("📂 لا توجد ملفات مخزنة حالياً.")
-            return
+            if not rows:
+                await update.message.reply_text("📂 لا توجد ملفات مخزنة حالياً.")
+                return
 
-        msg_text = "🗑 قائمة الملفات المخزنة لحذف أي ملف:\n\n"
-        for r in rows:
-            sec_display = SECTION_NAMES.get(r[1], r[1])
-            msg_text += f"🆔 {r[0]} | {sec_display}: {r[2]}\n"
-        
-        msg_text += "\n📌 مثال للحذف: /delete 3"
-        await update.message.reply_text(msg_text)
+            msg_text = "🗑 قائمة الملفات المخزنة لحذف أي ملف:\n\n"
+            for r in rows:
+                sec_display = SECTION_NAMES.get(r[1], r[1])
+                msg_text += f"🆔 {r[0]} | {sec_display}: {r[2]}\n"
+            
+            msg_text += "\n📌 مثال للحذف: /delete 3"
+            await update.message.reply_text(msg_text)
+        except Exception as e:
+            await update.message.reply_text(f"❌ خطأ: {e}")
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    conn = get_db()
-    c = conn.cursor()
-    c.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs")
-    total_users = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM user_logs")
-    total_actions = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM materials")
-    total_files = c.fetchone()[0]
-    c.close()
-    conn.close()
+    try:
+        conn = get_db()
+        if not conn:
+            await update.message.reply_text("❌ متعذر الاتصال بقاعدة البيانات حالياً.")
+            return
+        c = conn.cursor()
+        c.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs")
+        total_users = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM user_logs")
+        total_actions = c.fetchone()[0]
+        c.execute("SELECT COUNT(*) FROM materials")
+        total_files = c.fetchone()[0]
+        c.close()
+        conn.close()
 
-    msg = (
-        f"📊 إحصائيات البوت (السحابية الدائمة):\n\n"
-        f"👥 عدد المستخدمين: {total_users}\n"
-        f"💬 إجمالي التفاعلات: {total_actions}\n"
-        f"📚 إجمالي الملفات المخزنة: {total_files}"
-    )
-    await update.message.reply_text(msg)
+        msg = (
+            f"📊 إحصائيات البوت (السحابية الدائمة):\n\n"
+            f"👥 عدد المستخدمين: {total_users}\n"
+            f"💬 إجمالي التفاعلات: {total_actions}\n"
+            f"📚 إجمالي الملفات المخزنة: {total_files}"
+        )
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ في جلب الإحصائيات: {e}")
 
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -404,6 +455,7 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         conn = get_db()
+        if not conn: return
         c = conn.cursor()
         c.execute('''
             SELECT user_id, username, full_name, COUNT(*) as interaction_count 
@@ -448,6 +500,7 @@ async def user_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_id = context.args[0]
     try:
         conn = get_db()
+        if not conn: return
         c = conn.cursor()
         c.execute('''
             SELECT msg_type, content, timestamp 
@@ -493,6 +546,7 @@ def main():
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO, handle_incoming_files))
 
+    application.add_handler(CommandHandler("admin", admin_command))
     application.add_handler(CommandHandler("delete", delete_file_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("users", users_command))
