@@ -1,86 +1,99 @@
 import os
 import logging
 import asyncio
-import sqlite3
+import psycopg2
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+    ContextTypes,
+)
 
-# --- 1. إعداد قواعد البيانات والمشرف ---
-DB_FILE = "database.db"
-LOG_DB_FILE = "bot_logs.db"
+# --- 1. إعداد الاتصال بقاعدة البيانات السحابية (Supabase) ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# 🔒 بيانات الأدمن والكلمة المفتاحية السرية
 ADMIN_ID = 1329113404
 SECRET_ADMIN_KEY = "mpol90mpol90@555 fl"
 
+def get_db():
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
-    conn = sqlite3.connect(DB_FILE)
+    if not DATABASE_URL:
+        print("⚠️️ DATABASE_URL غير معرف في متغيرات البيئة!")
+        return
+    conn = get_db()
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS materials (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             section TEXT,
             title TEXT,
             file_id TEXT
-        )
+        );
     ''')
-    conn.commit()
-    conn.close()
-
-def init_log_db():
-    conn = sqlite3.connect(LOG_DB_FILE)
-    cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
             username TEXT,
             full_name TEXT,
             msg_type TEXT,
             content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
     ''')
     conn.commit()
+    cursor.close()
     conn.close()
 
-init_db()
-init_log_db()
+try:
+    init_db()
+except Exception as e:
+    print(f"Error initializing database: {e}")
 
-# --- 2. دوال التعامل مع قاعدة بيانات الملفات ---
+# --- 2. دوال التعامل مع قاعدة البيانات ---
 def add_material_to_db(section, title, file_id):
     sec = section.strip().lower()
     if sec in ["arabic", "اللغة العربية", "عربي"]:
         sec = "arabic"
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (?, ?, ?)", (sec, title, file_id))
+    cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (%s, %s, %s)", (sec, title, file_id))
     conn.commit()
+    cursor.close()
     conn.close()
 
 def get_materials_from_db(section):
     sec = section.strip().lower()
     if sec in ["arabic", "اللغة العربية", "عربي"]:
         sec = "arabic"
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, file_id FROM materials WHERE section = ?", (sec,))
+    cursor.execute("SELECT id, title, file_id FROM materials WHERE section = %s", (sec,))
     rows = cursor.fetchall()
+    cursor.close()
     conn.close()
     return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
 
 def delete_material_from_db(file_id):
-    conn = sqlite3.connect(DB_FILE)
+    conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM materials WHERE id = ?", (file_id,))
+    cursor.execute("DELETE FROM materials WHERE id = %s", (file_id,))
     deleted = cursor.rowcount > 0
     conn.commit()
+    cursor.close()
     conn.close()
     return deleted
 
-# --- 3. خادم السيرفر لـ Render ---
+# --- 3. خادم السيرفر لـ Render (Keep-Alive) ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -119,28 +132,28 @@ SECTION_NAMES = {
 }
 
 DUAS_LIST = (
-    "✨ **10 أذكار وأدعية مباركة** ✨\n\n"
+    "✨ 10 أذكار وأدعية مباركة ✨\n\n"
     "1. رَبَّنَا آتِنَا فِي الدُّنْيَا حَسَنَةً وَفِي الْآخِرَةِ حَسَنَةً وَقِنَا عَذَابَ النَّارِ.\n"
     "2. لَا إِلَهَ إِلَّا أَنْتَ سُبْحَانَكَ إِنِّي كُنْتُ مِنَ الظَّالِمِينَ.\n"
     "3. اللَّهُمَّ إِنَّكَ عَفُوٌّ كَرِيمٌ تُحِبُّ الْعَفْوَ فَاعْفُ عَنِّي.\n"
     "4. يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ.\n"
     "5. رَبِّ اشْرَحْ لِي صَدْرِي وَيَسِّرْ لِي أَمْرِي.\n"
-    "6. اللَّهُمَّ لَا سَهْلَ إِلَّا مَا جَعلتَهُ سَهْلاً، وَأَنْتَ تَجْعَلُ الْحَزْنَ إِذَا شِئْتَ سَهْلاً.\n"
+    "6. اللَّهُمَّ لَا سَهْلَ إِلَّا مَا جَعَلْتَهُ سَهْلاً، وَأَنْتَ تَجْعَلُ الْحَزْنَ إِذَا شِئْتَ سَهْلاً.\n"
     "7. حَسْبِي اللَّهُ لَا إِلَهَ إِلَّا هُوَ عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ الْعَرْشِ الْعَظِيمِ.\n"
     "8. اللَّهُمَّ إِنِّى أَسْأَلُكَ عِلْماً نَافِعاً، وَرِزْقاً طَيِّباً، وَعَمَلاً مُتَقَبَّلاً.\n"
     "9. سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.\n"
     "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
 
-# --- 4. تسجيل جميع الحركات تلقائياً ---
+# --- 4. تسجيل جميع الحركات تلقائياً في السحابة ---
 async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    if not user:
+    if not user or not DATABASE_URL:
         return
 
     user_id = user.id
     username = user.username or "بدون_معرف"
-    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "بدون اسم"
 
     content = ""
     msg_type = "unknown"
@@ -164,26 +177,27 @@ async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
             content = f"🎵 [صوت: {msg.audio.title or 'مقطع'}]"
         else:
             msg_type = "other"
-            content = f"📌 [{msg.type if hasattr(msg, 'type') else 'محتوى'}]"
+            content = f"📌 [محتوى آخر]"
     elif update.callback_query:
         msg_type = "button_click"
         content = f"🔘 ضغط زر: {update.callback_query.data}"
 
     try:
-        conn = sqlite3.connect(LOG_DB_FILE)
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO user_logs (user_id, username, full_name, msg_type, content)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s)
         ''', (user_id, username, full_name, msg_type, content))
         conn.commit()
+        cursor.close()
         conn.close()
     except Exception as e:
         logging.error(f"Error saving log: {e}")
 
-# --- 5. أوامر البوت والأزرار للطلاب ---
+# --- 5. أوامر البوت للطلاب والواجهة ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_name = update.effective_user.first_name
+    user_name = update.effective_user.first_name or "طالب"
     
     keyboard = [
         [InlineKeyboardButton("التربية الإسلامية", callback_data="sec_islamic"), InlineKeyboardButton("اللغة العربية", callback_data="sec_arabic")],
@@ -196,11 +210,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     welcome_text = (
-        f"Welcome {user_name} to your final school year!\n"
-        "🎓 **Senior 27 | Al Falah Academy | MBZ** 🇦🇪"
+        f"أهلاً بك يا {user_name} في سنتك الدراسية الختامية!\n"
+        "🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪"
     )
     
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -217,7 +231,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sec_key = "arabic"
         
         if sec_key == "duas":
-            await query.message.reply_text(DUAS_LIST, parse_mode="Markdown")
+            await query.message.reply_text(DUAS_LIST)
             return
 
         files_list = get_materials_from_db(sec_key)
@@ -232,18 +246,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text(
-            f"📂 **قائمة ملفات قسم ({SECTION_NAMES.get(sec_key, sec_key)})**:\nاضغط على الملف لتنزيله فوراً:",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
+            f"📂 قائمة ملفات قسم ({SECTION_NAMES.get(sec_key, sec_key)}):\nاضغط على الملف لتنزيله فوراً:",
+            reply_markup=reply_markup
         )
         return
 
     if data.startswith("getfile_"):
         file_id_db = int(data.replace("getfile_", ""))
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT title, file_id FROM materials WHERE id = ?", (file_id_db,))
+        cursor.execute("SELECT title, file_id FROM materials WHERE id = %s", (file_id_db,))
         row = cursor.fetchone()
+        cursor.close()
         conn.close()
 
         if row:
@@ -273,7 +287,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del pending_files[file_token]
 
         await query.message.edit_text(
-            f"✅ **تم حفظ الملف بنجاح في قاعدة البيانات الدائمة!**\n"
+            f"✅ تم حفظ الملف بنجاح في قاعدة البيانات السحابية!\n"
             f"📌 العنوان: {file_data['title']}\n"
             f"📂 القسم: {SECTION_NAMES.get(target_sec, target_sec)}"
         )
@@ -303,14 +317,12 @@ async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup = InlineKeyboardMarkup(keyboard)
 
         await message.reply_text(
-            f"📥 **تم استلام الملف:** {caption}\n\n"
+            f"📥 تم استلام الملف: {caption}\n\n"
             f"رجاءً، اختر القسم المناسب لإضافة هذا الملف إليه:",
             reply_markup=reply_markup
         )
 
-# --- 6. نظام التحقق واللوحة السرية للأدمن فقط ---
-
-# 🔑 تفعيل وتأكيد الكلمة المفتاحية للأدمن
+# --- 6. لوحة تحكم المشرف (الأدمن) ---
 async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -318,94 +330,89 @@ async def secret_admin_auth(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip()
 
-    # إذا أرسل الكلمة المفتاحية وكان حسابه هو حساب الأدمن
     if text == SECRET_ADMIN_KEY and user_id == ADMIN_ID:
         admin_panel = (
-            "🔐 **مرحباً بك يا مدير البوت! تم التفعيل بنجاح.**\n\n"
-            "إليك الأوامر الخاصة بك فقط (لا يمكن لأي شخص آخر استخدامها):\n\n"
-            "📊 `/stats` - لعرض الإحصائيات وعدد المستخدمين والملفات\n"
-            "👥 `/users` - لعرض قائمة حسابات جميع من استخدم البوت\n"
-            "📜 `/user_logs ID` - لرؤية كل رسائل وتفاعلات شخص معين\n"
-            "🗑 `/delete` - لعرض وتحديد الملفات لحذفها من البوت\n"
-            "📌 *أمثلة:* `/delete 5` أو `/user_logs 123456789`"
+            "🔐 مرحباً بك يا مدير البوت! تم التفعيل بنجاح.\n\n"
+            "إليك الأوامر الخاصة بك فقط (مربوطة بالسحابة الدائمة):\n\n"
+            "📊 /stats - لعرض الإحصائيات وعدد المستخدمين والملفات\n"
+            "👥 /users - لعرض قائمة حسابات جميع من استخدم البوت\n"
+            "📜 /user_logs ID - لرؤية كل رسائل وتفاعلات شخص معين\n"
+            "🗑 /delete - لعرض وتحديد الملفات لحذفها من البوت\n\n"
+            "📌 أمثلة: /delete 5 أو /user_logs 1329113404"
         )
-        await update.message.reply_text(admin_panel, parse_mode="Markdown")
+        await update.message.reply_text(admin_panel)
 
-# أمر حذف الملفات: /delete
 async def delete_file_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        return  # تجاهل تفتيش أي شخص آخر
+        return
 
     if context.args:
         try:
             f_id = int(context.args[0])
             if delete_material_from_db(f_id):
-                await update.message.reply_text(f"✅ تم حذف الملف رقم ({f_id}) بنجاح من قاعدة البيانات.")
+                await update.message.reply_text(f"✅ تم حذف الملف رقم ({f_id}) بنجاح.")
             else:
                 await update.message.reply_text(f"❌ لم يتم العثور على ملف بالرقم ({f_id}).")
         except ValueError:
-            await update.message.reply_text("❌ يرجى إدخال رقم ID صحيح. مثال:\n`/delete 5`", parse_mode="Markdown")
+            await update.message.reply_text("❌ يرجى إدخال رقم ID صحيح.")
     else:
-        conn = sqlite3.connect(DB_FILE)
+        conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT id, section, title FROM materials ORDER BY id DESC")
         rows = cursor.fetchall()
+        cursor.close()
         conn.close()
 
         if not rows:
             await update.message.reply_text("📂 لا توجد ملفات مخزنة حالياً.")
             return
 
-        msg_text = "🗑 **قائمة الملفات المخزنة لحذف أي ملف:**\nاكتب `/delete` متبوعاً برقم ID الملف:\n\n"
+        msg_text = "🗑 قائمة الملفات المخزنة لحذف أي ملف:\n\n"
         for r in rows:
             sec_display = SECTION_NAMES.get(r[1], r[1])
-            msg_text += f"🆔 `{r[0]}` | {sec_display}: **{r[2]}**\n"
+            msg_text += f"🆔 {r[0]} | {sec_display}: {r[2]}\n"
         
-        msg_text += "\n📌 *مثال للحذف:* `/delete 3`"
-        await update.message.reply_text(msg_text, parse_mode="Markdown")
+        msg_text += "\n📌 مثال للحذف: /delete 3"
+        await update.message.reply_text(msg_text)
 
-# أمر الإحصائيات العامة: /stats
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    conn_log = sqlite3.connect(LOG_DB_FILE)
-    c_log = conn_log.cursor()
-    c_log.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs")
-    total_users = c_log.fetchone()[0]
-    c_log.execute("SELECT COUNT(*) FROM user_logs")
-    total_actions = c_log.fetchone()[0]
-    conn_log.close()
-
-    conn_db = sqlite3.connect(DB_FILE)
-    c_db = conn_db.cursor()
-    c_db.execute("SELECT COUNT(*) FROM materials")
-    total_files = c_db.fetchone()[0]
-    conn_db.close()
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs")
+    total_users = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM user_logs")
+    total_actions = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM materials")
+    total_files = c.fetchone()[0]
+    c.close()
+    conn.close()
 
     msg = (
-        f"📊 **إحصائيات البوت ومستخدميه:**\n\n"
-        f"👥 **عدد المستخدمين النشطين:** {total_users}\n"
-        f"💬 **إجمالي التفاعلات والرسائل:** {total_actions}\n"
-        f"📚 **إجمالي الملفات المخزنة:** {total_files}"
+        f"📊 إحصائيات البوت (السحابية الدائمة):\n\n"
+        f"👥 عدد المستخدمين: {total_users}\n"
+        f"💬 إجمالي التفاعلات: {total_actions}\n"
+        f"📚 إجمالي الملفات المخزنة: {total_files}"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg)
 
-# أمر عرض قائمة حسابات المستخدمين: /users (معدلة لتكون آمنة من أخطاء التنسيق)
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     try:
-        conn = sqlite3.connect(LOG_DB_FILE)
+        conn = get_db()
         c = conn.cursor()
         c.execute('''
             SELECT user_id, username, full_name, COUNT(*) as interaction_count 
             FROM user_logs 
-            GROUP BY user_id
+            GROUP BY user_id, username, full_name
             ORDER BY interaction_count DESC
         ''')
         rows = c.fetchall()
+        c.close()
         conn.close()
 
         if not rows:
@@ -425,48 +432,50 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"-------------------\n"
             )
         
-        # إرسال الرسالة كنص عادي بدون parse_mode لتفادي توقف البوت بسبب الإيموجي والزخارف
         await update.message.reply_text(msg)
 
     except Exception as e:
         await update.message.reply_text(f"❌ حدث خطأ أثناء جلب القائمة: {e}")
 
-# أمر عرض أرشيف وتفاعلات مستخدم معين: /user_logs ID
 async def user_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     if not context.args:
-        await update.message.reply_text("يرجى إدخال ID المستخدم.\nمثال: `/user_logs 123456789`", parse_mode="Markdown")
+        await update.message.reply_text("يرجى إدخال ID المستخدم.")
         return
 
     target_id = context.args[0]
-    conn = sqlite3.connect(LOG_DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        SELECT msg_type, content, timestamp 
-        FROM user_logs 
-        WHERE user_id = ? 
-        ORDER BY timestamp DESC LIMIT 20
-    ''', (target_id,))
-    rows = c.fetchall()
-    conn.close()
+    try:
+        conn = get_db()
+        c = conn.cursor()
+        c.execute('''
+            SELECT msg_type, content, timestamp 
+            FROM user_logs 
+            WHERE user_id = %s 
+            ORDER BY timestamp DESC LIMIT 20
+        ''', (int(target_id),))
+        rows = c.fetchall()
+        c.close()
+        conn.close()
 
-    if not rows:
-        await update.message.reply_text(f"لم يتم العثور على أي تفاعلات للمستخدم `{target_id}`.", parse_mode="Markdown")
-        return
+        if not rows:
+            await update.message.reply_text(f"لم يتم العثور على أي تفاعلات للمستخدم ({target_id}).")
+            return
 
-    msg = f"📜 **سجل تفاعلات المستخدم (`{target_id}`):**\n\n"
-    for r in rows:
-        mtype, content, time = r
-        msg += f"⏱ [{time}]\n💬 {content}\n-------------------\n"
+        msg = f"📜 سجل تفاعلات المستخدم ({target_id}):\n\n"
+        for r in rows:
+            mtype, content, time = r
+            msg += f"⏱ [{time}]\n💬 {content}\n-------------------\n"
 
-    await update.message.reply_text(msg, parse_mode="Markdown")
+        await update.message.reply_text(msg)
+    except Exception as e:
+        await update.message.reply_text(f"❌ حدث خطأ: {e}")
 
-# --- 7. تشغيل البوت وربط المعالجات ---
+# --- 7. تشغيل البوت ---
 def main():
     if not TELEGRAM_TOKEN:
-        print("خطأ: لم يتم العثور على TELEGRAM_TOKEN في متغيرات البيئة!")
+        print("خطأ: لم يتم العثور على TELEGRAM_TOKEN!")
         return
 
     application = (
@@ -476,25 +485,20 @@ def main():
         .build()
     )
 
-    # تسجيل جميع الرسائل والتفاعلات في الخلفية
     application.add_handler(MessageHandler(filters.ALL, log_activity), group=-1)
     application.add_handler(CallbackQueryHandler(log_activity), group=-1)
 
-    # معالج الكلمة المفتاحية الخاصة بك للأدمن
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, secret_admin_auth))
-
-    # المعالجات الأساسية للبوت
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.AUDIO, handle_incoming_files))
 
-    # أوامر الإدارة والحذف (محمية للأدمن فقط)
     application.add_handler(CommandHandler("delete", delete_file_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("users", users_command))
     application.add_handler(CommandHandler("user_logs", user_logs_command))
 
-    print("تم بدء تشغيل البوت بنجاح...")
+    print("تم بدء تشغيل البوت المربوط بقاعدة البيانات السحابية...")
     
     try:
         loop = asyncio.get_event_loop()
