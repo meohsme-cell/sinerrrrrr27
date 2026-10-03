@@ -1,3 +1,2 @@
-python-telegram-bot==21.10
-openai
-httpx
+python-telegram-bot
+psycopg2-binary
