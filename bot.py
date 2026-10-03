@@ -391,37 +391,45 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
-# أمر عرض قائمة حسابات المستخدمين: /users
+# أمر عرض قائمة حسابات المستخدمين: /users (معدلة لتكون آمنة من أخطاء التنسيق)
 async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    conn = sqlite3.connect(LOG_DB_FILE)
-    c = conn.cursor()
-    c.execute('''
-        SELECT user_id, username, full_name, COUNT(*) as interaction_count 
-        FROM user_logs 
-        GROUP BY user_id
-        ORDER BY interaction_count DESC
-    ''')
-    rows = c.fetchall()
-    conn.close()
+    try:
+        conn = sqlite3.connect(LOG_DB_FILE)
+        c = conn.cursor()
+        c.execute('''
+            SELECT user_id, username, full_name, COUNT(*) as interaction_count 
+            FROM user_logs 
+            GROUP BY user_id
+            ORDER BY interaction_count DESC
+        ''')
+        rows = c.fetchall()
+        conn.close()
 
-    if not rows:
-        await update.message.reply_text("لا يوجد مستخدمون مسجلون حتى الآن.")
-        return
+        if not rows:
+            await update.message.reply_text("👥 لا يوجد مستخدمون مسجلون حتى الآن.")
+            return
 
-    msg = f"👥 **قائمة مستخدمي البوت ({len(rows)}):**\n\n"
-    for r in rows:
-        uid, uname, fname, count = r
-        msg += (
-            f"👤 **الاسم:** {fname}\n"
-            f"🔗 **المعرف:** @{uname}\n"
-            f"🆔 **User ID:** `{uid}`\n"
-            f"💬 **عدد التفاعلات:** {count}\n"
-            f"-------------------\n"
-        )
-    await update.message.reply_text(msg, parse_mode="Markdown")
+        msg = f"👥 قائمة مستخدمي البوت ({len(rows)}):\n\n"
+        for r in rows:
+            uid, uname, fname, count = r
+            safe_fname = fname if fname else "بدون اسم"
+            safe_uname = f"@{uname}" if uname and uname != "بدون_معرف" else "بدون معرف"
+            msg += (
+                f"👤 الاسم: {safe_fname}\n"
+                f"🔗 المعرف: {safe_uname}\n"
+                f"🆔 User ID: {uid}\n"
+                f"💬 عدد التفاعلات: {count}\n"
+                f"-------------------\n"
+            )
+        
+        # إرسال الرسالة كنص عادي بدون parse_mode لتفادي توقف البوت بسبب الإيموجي والزخارف
+        await update.message.reply_text(msg)
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ حدث خطأ أثناء جلب القائمة: {e}")
 
 # أمر عرض أرشيف وتفاعلات مستخدم معين: /user_logs ID
 async def user_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
