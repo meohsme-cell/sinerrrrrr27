@@ -1,6 +1,5 @@
 import os
 import logging
-import asyncio
 import psycopg2
 from google import genai
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -78,8 +77,6 @@ except Exception as e:
 # --- 2. دوال التعامل مع قاعدة البيانات ---
 def add_material_to_db(section, title, file_id):
     sec = section.strip().lower()
-    if sec in ["arabic", "اللغة العربية", "عربي"]:
-        sec = "arabic"
     try:
         conn = get_db()
         if not conn: return
@@ -93,8 +90,6 @@ def add_material_to_db(section, title, file_id):
 
 def get_materials_from_db(section):
     sec = section.strip().lower()
-    if sec in ["arabic", "اللغة العربية", "عربي"]:
-        sec = "arabic"
     try:
         conn = get_db()
         if not conn: return []
@@ -175,7 +170,7 @@ DUAS_LIST = (
     "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
 
-# --- 4. تسجيل كافة حركات وتفاعلات المستخدمين في الخلفية بدقة ---
+# --- 4. تسجيل التفاعلات ---
 async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not user or not DATABASE_URL:
@@ -199,12 +194,6 @@ async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif msg.photo:
             msg_type = "photo"
             content = f"📷 [صورة] {msg.caption or ''}"
-        elif msg.voice:
-            msg_type = "voice"
-            content = "🎤 [تسجيل صوتي]"
-        elif msg.audio:
-            msg_type = "audio"
-            content = f"🎵 [صوت: {msg.audio.title or 'مقطع'}]"
         else:
             msg_type = "other"
             content = "📌 [محتوى آخر]"
@@ -226,8 +215,9 @@ async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error saving log: {e}")
 
-# --- 5. أوامر البوت وقائمة المواد للطلاب ---
+# --- 5. أوامر البوت والتفاعل ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await log_activity(update, context)
     user_name = update.effective_user.first_name if update.effective_user and update.effective_user.first_name else "طالب"
     
     keyboard = [
@@ -243,16 +233,4 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"أهلاً بك يا {user_name} في بوت الصف الثاني عشر المتقدم!\n"
         "🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪\n\n"
-        "اختر المادة الدراسية التي تريدها من الأزرار أدناه، أو راسلني بأي سؤال وسأجيبك فوراً بالذكاء الاصطناعي!"
-    )
-    
-    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "batch_badge":
-        await query.message.reply_text("🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪")
-        return
+        "اختر المادة الدراسية التي تريدها من الأزرار أدناه، أو راسلني بأي سؤال وسأجيبك فوراً بالذكاء الاصطناعي
