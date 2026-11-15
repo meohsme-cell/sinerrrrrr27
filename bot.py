@@ -1,6 +1,7 @@
 import os
 import logging
 import psycopg2
+import sentry_sdk
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
@@ -12,6 +13,15 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+
+# تفعيل Sentry للمراقبة الحية
+SENTRY_DSN = os.getenv("SENTRY_DSN")
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        traces_sample_rate=1.0,
+        profiles_sample_rate=1.0,
+    )
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
@@ -33,18 +43,18 @@ def init_db():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, section TEXT, title TEXT, file_id TEXT);''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS user_logs (id SERIAL PRIMARY KEY, user_id BIGINT, username TEXT, full_name TEXT, msg_type TEXT, content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);''')
-        # جدول الملفات المعلقة يعتمد على file_unique_id ليدعم إرسال عدة ملفات معاً بدون أي تداخل
+        # جدول الملفات المعلقة يعتمد على unique_id كـ Primary Key ليدعم عدد لا نهائي من الملفات المرسلة معاً دون تداخل
         cursor.execute('''CREATE TABLE IF NOT EXISTS pending_uploads (unique_id TEXT PRIMARY KEY, owner_id BIGINT, file_id TEXT, title TEXT);''')
         conn.commit()
         cursor.close()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
 
 try:
     init_db()
-except Exception:
-    pass
+except Exception as e:
+    sentry_sdk.capture_exception(e)
 
 def get_materials_from_db(section):
     sec = section.strip().lower()
@@ -57,7 +67,8 @@ def get_materials_from_db(section):
         cursor.close()
         conn.close()
         return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return []
 
 def get_material_by_id(mat_id):
@@ -72,7 +83,8 @@ def get_material_by_id(mat_id):
         if row:
             return {"id": row[0], "title": row[1], "file_id": row[2]}
         return None
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return None
 
 def add_material_to_db(section, title, file_id):
@@ -86,7 +98,7 @@ def add_material_to_db(section, title, file_id):
         cursor.close()
         conn.close()
     except Exception as e:
-        logging.error(f"DB Add Error: {e}")
+        sentry_sdk.capture_exception(e)
 
 def delete_material_from_db(file_id):
     try:
@@ -99,7 +111,8 @@ def delete_material_from_db(file_id):
         cursor.close()
         conn.close()
         return deleted
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return False
 
 def save_pending_to_db(unique_id, owner_id, file_id, title):
@@ -114,8 +127,8 @@ def save_pending_to_db(unique_id, owner_id, file_id, title):
         conn.commit()
         cursor.close()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
 
 def get_pending_from_db(unique_id):
     try:
@@ -129,7 +142,8 @@ def get_pending_from_db(unique_id):
         if row:
             return {"file_id": row[0], "title": row[1]}
         return None
-    except Exception:
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
         return None
 
 def clear_pending_from_db(unique_id):
@@ -141,8 +155,8 @@ def clear_pending_from_db(unique_id):
         conn.commit()
         cursor.close()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
 
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -220,6 +234,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(logs_text[:4000], parse_mode="Markdown")
             return
         except Exception as e:
+            sentry_sdk.capture_exception(e)
             if update.message:
                 await update.message.reply_text(f"خطأ: {e}")
             return
@@ -337,11 +352,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 await query.message.reply_text("⚠️ عذراً، هذا الملف غير موجود أو تم حذفه.")
-        except Exception:
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
             await query.message.reply_text("⚠️ حدث خطأ أثناء إرسال الملف.")
         return
 
-    # معالجة حفظ الملف باستخدام unique_id الخاص به لكل زر
+    # معالجة حفظ الملف باستخدام unique_id الخاص به لكل زر على حدة
     if data.startswith("up_"):
         parts = data.split("_", 2)
         if len(parts) == 3:
@@ -351,7 +367,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if file_info:
                 add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
                 sec_title = SECTION_NAMES.get(sec_key, sec_key)
-                await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
+                await query.message.edit_text(f"✅ **تم حفظ الملف ({file_info['title']}) بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
                 clear_pending_from_db(unique_id)
             else:
                 await query.message.edit_text("⚠️ انتهت صلاحية هذا الملف أو تم حفظه مسبقاً.")
@@ -388,13 +404,12 @@ async def handle_document_message(update: Update, context: ContextTypes.DEFAULT_
         msg = update.message
         file_obj = msg.document if msg.document else msg.photo[-1]
         file_id = file_obj.file_id
-        unique_id = file_obj.file_unique_id  # معرف فريد لكل ملف على حدة
+        unique_id = file_obj.file_unique_id  # المعرف الفريد الخاص بكل ملف لضمان عدم التداخل عند الإرسال المتعدد
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         
-        # حفظ كل ملف مع معرّفه الفريد في قاعدة البيانات
+        # حفظ كل ملف مع معرّفه الفريد بشكل مستقل تماماً
         save_pending_to_db(unique_id, user_id, file_id, title)
         
-        # ربط الأزرار بالمعرف الفريد للملف لتجنب التداخل نهائياً
         keyboard = [
             [InlineKeyboardButton("📁 رياضيات", callback_data=f"up_math_{unique_id}"), InlineKeyboardButton("📁 كيمياء", callback_data=f"up_chemistry_{unique_id}")],
             [InlineKeyboardButton("📁 أحياء", callback_data=f"up_biology_{unique_id}"), InlineKeyboardButton("📁 إنجليزي", callback_data=f"up_english_{unique_id}")],
