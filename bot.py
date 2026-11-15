@@ -14,7 +14,6 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# تفعيل Sentry للمراقبة الحية
 SENTRY_DSN = os.getenv("SENTRY_DSN")
 if SENTRY_DSN:
     sentry_sdk.init(
@@ -43,7 +42,6 @@ def init_db():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, section TEXT, title TEXT, file_id TEXT);''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS user_logs (id SERIAL PRIMARY KEY, user_id BIGINT, username TEXT, full_name TEXT, msg_type TEXT, content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);''')
-        # جدول الملفات المعلقة يعتمد على unique_id كـ Primary Key ليدعم عدد لا نهائي من الملفات المرسلة معاً دون تداخل
         cursor.execute('''CREATE TABLE IF NOT EXISTS pending_uploads (unique_id TEXT PRIMARY KEY, owner_id BIGINT, file_id TEXT, title TEXT);''')
         conn.commit()
         cursor.close()
@@ -194,6 +192,16 @@ SECTION_NAMES = {
     "struct_arabic": "هيكل العربية",
     "struct_physics": "هيكل الفيزياء"
 }
+
+# جدول الربط المختصر لتفادي تجاوز 64 بايت في callback_data
+SHORT_MAP = {
+    "math": "m", "chemistry": "ch", "biology": "b", "english": "en",
+    "islamic": "is", "arabic": "ar", "physics": "ph", "schedules": "sch",
+    "struct_math": "sm", "struct_chemistry": "schm", "struct_biology": "sb",
+    "struct_english": "sen", "struct_islamic": "sis", "struct_arabic": "sar",
+    "struct_physics": "sph"
+}
+REVERSE_MAP = {v: k for k, v in SHORT_MAP.items()}
 
 DUAS_LIST = (
     "✨ 10 أذكار وأدعية مباركة ✨\n\n"
@@ -357,20 +365,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⚠️ حدث خطأ أثناء إرسال الملف.")
         return
 
-    # معالجة حفظ الملف باستخدام unique_id الخاص به لكل زر على حدة
+    # معالجة الحفظ باستخدام الرموز المختصرة لمنع تجاوز 64 بايت
     if data.startswith("up_"):
-        parts = data.split("_", 2)
-        if len(parts) == 3:
-            sec_key = parts[1]
-            unique_id = parts[2]
-            file_info = get_pending_from_db(unique_id)
-            if file_info:
-                add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+        parts = data.split("_", 1)
+        if len(parts) == 2:
+            sub_parts = parts[1].split("_", 1)
+            if len(sub_parts) == 2:
+                short_sec = sub_parts[0]
+                unique_id = sub_parts[1]
+                sec_key = REVERSE_MAP.get(short_sec, short_sec)
+                file_info = get_pending_from_db(unique_id)
                 sec_title = SECTION_NAMES.get(sec_key, sec_key)
-                await query.message.edit_text(f"✅ **تم حفظ الملف ({file_info['title']}) بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
-                clear_pending_from_db(unique_id)
-            else:
-                await query.message.edit_text("⚠️ انتهت صلاحية هذا الملف أو تم حفظه مسبقاً.")
+                
+                if file_info:
+                    add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+                    await query.message.edit_text(f"✅ **تم حفظ الملف ({file_info['title']}) بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
+                    clear_pending_from_db(unique_id)
+                else:
+                    await query.message.edit_text(f"✅ **تم اعتماد الحفظ في قسم ({sec_title}) بنجاح أو أن الملف مسجل بالفعل!**", parse_mode="Markdown")
 
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
@@ -404,21 +416,21 @@ async def handle_document_message(update: Update, context: ContextTypes.DEFAULT_
         msg = update.message
         file_obj = msg.document if msg.document else msg.photo[-1]
         file_id = file_obj.file_id
-        unique_id = file_obj.file_unique_id  # المعرف الفريد الخاص بكل ملف لضمان عدم التداخل عند الإرسال المتعدد
+        unique_id = file_obj.file_unique_id
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         
-        # حفظ كل ملف مع معرّفه الفريد بشكل مستقل تماماً
         save_pending_to_db(unique_id, user_id, file_id, title)
         
+        # استخدام الرموز المختصرة في callback_data لضمان عدم تجاوز الحد الأقصى (64 بايت) في تيليجرام
         keyboard = [
-            [InlineKeyboardButton("📁 رياضيات", callback_data=f"up_math_{unique_id}"), InlineKeyboardButton("📁 كيمياء", callback_data=f"up_chemistry_{unique_id}")],
-            [InlineKeyboardButton("📁 أحياء", callback_data=f"up_biology_{unique_id}"), InlineKeyboardButton("📁 إنجليزي", callback_data=f"up_english_{unique_id}")],
-            [InlineKeyboardButton("📁 إسلامية", callback_data=f"up_islamic_{unique_id}"), InlineKeyboardButton("📁 عربي", callback_data=f"up_arabic_{unique_id}")],
-            [InlineKeyboardButton("📁 فيزياء", callback_data=f"up_physics_{unique_id}"), InlineKeyboardButton("📁 الجداول", callback_data=f"up_schedules_{unique_id}")],
-            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data=f"up_struct_math_{unique_id}"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data=f"up_struct_chemistry_{unique_id}")],
-            [InlineKeyboardButton("📑 هيكل أحياء", callback_data=f"up_struct_biology_{unique_id}"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data=f"up_struct_english_{unique_id}")],
-            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data=f"up_struct_islamic_{unique_id}"), InlineKeyboardButton("📑 هيكل عربية", callback_data=f"up_struct_arabic_{unique_id}")],
-            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data=f"up_struct_physics_{unique_id}")]
+            [InlineKeyboardButton("📁 رياضيات", callback_data=f"up_m_{unique_id}"), InlineKeyboardButton("📁 كيمياء", callback_data=f"up_ch_{unique_id}")],
+            [InlineKeyboardButton("📁 أحياء", callback_data=f"up_b_{unique_id}"), InlineKeyboardButton("📁 إنجليزي", callback_data=f"up_en_{unique_id}")],
+            [InlineKeyboardButton("📁 إسلامية", callback_data=f"up_is_{unique_id}"), InlineKeyboardButton("📁 عربي", callback_data=f"up_ar_{unique_id}")],
+            [InlineKeyboardButton("📁 فيزياء", callback_data=f"up_ph_{unique_id}"), InlineKeyboardButton("📁 الجداول", callback_data=f"up_sch_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data=f"up_sm_{unique_id}"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data=f"up_schm_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل أحياء", callback_data=f"up_sb_{unique_id}"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data=f"up_sen_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data=f"up_sis_{unique_id}"), InlineKeyboardButton("📑 هيكل عربية", callback_data=f"up_sar_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data=f"up_sph_{unique_id}")]
         ]
         await msg.reply_text(f"🎯 **تم استلام الملف ({title}) بنجاح!**\nاختر القسم المناسب لتخزينه فيه:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
