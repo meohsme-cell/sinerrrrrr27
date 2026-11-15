@@ -37,10 +37,13 @@ def init_db():
         conn.commit()
         cursor.close()
         conn.close()
-    except: pass
+    except Exception:
+        pass
 
-try: init_db()
-except: pass
+try:
+    init_db()
+except Exception:
+    pass
 
 def get_materials_from_db(section):
     sec = section.strip().lower()
@@ -53,7 +56,8 @@ def get_materials_from_db(section):
         cursor.close()
         conn.close()
         return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
-    except: return []
+    except Exception:
+        return []
 
 def get_material_by_id(mat_id):
     try:
@@ -67,7 +71,8 @@ def get_material_by_id(mat_id):
         if row:
             return {"id": row[0], "title": row[1], "file_id": row[2]}
         return None
-    except: return None
+    except Exception:
+        return None
 
 def add_material_to_db(section, title, file_id):
     sec = section.strip().lower()
@@ -93,7 +98,8 @@ def delete_material_from_db(file_id):
         cursor.close()
         conn.close()
         return deleted
-    except: return False
+    except Exception:
+        return False
 
 def save_pending_to_db(owner_id, file_id, title):
     try:
@@ -107,7 +113,8 @@ def save_pending_to_db(owner_id, file_id, title):
         conn.commit()
         cursor.close()
         conn.close()
-    except: pass
+    except Exception:
+        pass
 
 def get_pending_from_db(owner_id):
     try:
@@ -121,7 +128,8 @@ def get_pending_from_db(owner_id):
         if row:
             return {"file_id": row[0], "title": row[1]}
         return None
-    except: return None
+    except Exception:
+        return None
 
 def clear_pending_from_db(owner_id):
     try:
@@ -132,7 +140,8 @@ def clear_pending_from_db(owner_id):
         conn.commit()
         cursor.close()
         conn.close()
-    except: pass
+    except Exception:
+        pass
 
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -225,99 +234,3 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر 🎓",
         reply_markup=reply_markup
-    )
-
-async def process_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else 0
-    if user_id not in [OWNER_ID, ADMIN_ID]:
-        await update.message.reply_text("⚠️ عذراً، هذا الأمر مخصص للمسؤولين فقط.")
-        return
-
-    text = "📋 **قائمة كافة الملفات المسجلة وأرقامها (للحذف):**\n\n"
-    has_items = False
-    
-    for sec_key, sec_title in SECTION_NAMES.items():
-        items = get_materials_from_db(sec_key)
-        if items:
-            has_items = True
-            text += f"📂 **{sec_title}**:\n"
-            for item in items:
-                text += f"   🔹 رقم (`{item['id']}`): {item['title']}\n"
-            text += "\n"
-    
-    if not has_items:
-        await update.message.reply_text("📁 قاعدة البيانات فارغة تماماً ولا توجد أي ملفات مرفوعة حتى الآن.")
-        return
-
-    text += "⚠️ **طريقة الحذف:** أرسل رقم الملف مباشرة (مثلاً: أرسل الرقم `5` لوحده ليتم حذف الملف الذي يحمله)."
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "open_structures":
-        struct_keyboard = [
-            [InlineKeyboardButton("هيكل رياضيات", callback_data="sec_struct_math"), InlineKeyboardButton("هيكل كيمياء", callback_data="sec_struct_chemistry")],
-            [InlineKeyboardButton("هيكل أحياء", callback_data="sec_struct_biology"), InlineKeyboardButton("هيكل إنجليزي", callback_data="sec_struct_english")],
-            [InlineKeyboardButton("هيكل إسلامية", callback_data="sec_struct_islamic"), InlineKeyboardButton("هيكل عربية", callback_data="sec_struct_arabic")],
-            [InlineKeyboardButton("هيكل فيزياء", callback_data="sec_struct_physics")],
-            [InlineKeyboardButton("🔙 عودة للقائمة الرئيسية", callback_data="back_to_main")]
-        ]
-        await query.message.edit_text("📁 **قسم الهياكل الدراسية**\nاختر المادة لعرض الهياكل الخاصة بها:", reply_markup=InlineKeyboardMarkup(struct_keyboard), parse_mode="Markdown")
-        return
-
-    if data == "back_to_main":
-        keyboard = [
-            [InlineKeyboardButton("رياضيات", callback_data="sec_math"), InlineKeyboardButton("كيمياء", callback_data="sec_chemistry")],
-            [InlineKeyboardButton("أحياء", callback_data="sec_biology"), InlineKeyboardButton("إنجليزي", callback_data="sec_english")],
-            [InlineKeyboardButton("إسلامية", callback_data="sec_islamic"), InlineKeyboardButton("عربي", callback_data="sec_arabic")],
-            [InlineKeyboardButton("فيزياء", callback_data="sec_physics"), InlineKeyboardButton("أدعية وأذكار", callback_data="sec_duas")],
-            [InlineKeyboardButton("الجداول الدراسية", callback_data="sec_schedules"), InlineKeyboardButton("📁 الهياكل الدراسية", callback_data="open_structures")],
-            [InlineKeyboardButton("🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪", callback_data="batch_badge")]
-        ]
-        await query.message.edit_text("أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر 🎓", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if data.startswith("sec_"):
-        sec_key = data.replace("sec_", "")
-        if sec_key == "duas":
-            await query.message.reply_text(DUAS_LIST)
-            return
-            
-        items = get_materials_from_db(sec_key)
-        sec_title = SECTION_NAMES.get(sec_key, "القسم")
-        if not items:
-            await query.message.reply_text(f"📁 قسم **{sec_title}** لا توجد فيه ملفات مرفوعة حالياً.", parse_mode="Markdown")
-            return
-            
-        file_keyboard = []
-        for item in items:
-            title_short = item["title"] if len(item["title"]) < 40 else item["title"][:37] + "..."
-            file_keyboard.append([InlineKeyboardButton(f"📄 {title_short}", callback_data=f"getfile_{item['id']}")])
-        
-        if sec_key.startswith("struct_"):
-            file_keyboard.append([InlineKeyboardButton("🔙 عودة لقسم الهياكل", callback_data="open_structures")])
-        else:
-            file_keyboard.append([InlineKeyboardButton("🔙 عودة للقائمة الرئيسية", callback_data="back_to_main")])
-
-        await query.message.edit_text(
-            f"📂 ملفات قسم **{sec_title}**:\nاختر الملف الذي تريد فتحه وتحميله:",
-            reply_markup=InlineKeyboardMarkup(file_keyboard),
-            parse_mode="Markdown"
-        )
-        return
-
-    if data.startswith("getfile_"):
-        try:
-            mat_id = int(data.replace("getfile_", ""))
-            mat = get_material_by_id(mat_id)
-            if mat and mat["file_id"]:
-                await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=mat["file_id"],
-                    caption=f"📄 {mat['title']}"
-                )
-            else:
-                await query.message.reply_text
