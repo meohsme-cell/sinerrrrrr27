@@ -274,17 +274,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # التحقق هل المستخدم هو المالك أو المشرف المعتمد
     if user_id != OWNER_ID and user_id != ADMIN_ID:
         await update.message.reply_text("⚠️ عذراً، هذا الأمر غير متاح لك.")
         return
 
-    # التحقق من إدخال كلمة السر مع الأمر
     if not context.args or context.args[0] != SECRET_ADMIN_KEY:
         await update.message.reply_text("❌ كلمة السر غير صحيحة أو ناقصة.\nالاستخدام الصحيح:\n`/admin mpol90mpol90@M7`", parse_mode="Markdown")
         return
 
-    # إذا كانت كلمة السر صحيحة، نعرض له إحصائيات البوت ولوحة الإدارة
     users_count, interactions_count, materials_count = get_bot_stats()
     stats_text = (
         "📊 **لوحة تحكم وإحصائيات البوت السحابية (الإدارة):**\n\n"
