@@ -1,8 +1,6 @@
 import os
 import logging
 import psycopg2
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -16,6 +14,10 @@ from telegram.ext import (
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+# رابط خدمة Render الخاص بك تماماً كما يظهر في صورتك
+RENDER_URL = "https://sinerrrrr27.onrender.com"
 
 OWNER_ID = 1329113404
 ADMIN_ID = 1110343074
@@ -66,22 +68,6 @@ def delete_material_from_db(file_id):
         conn.close()
         return deleted
     except: return False
-
-class SimpleHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is alive!")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-
-def run_server():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
-    server.serve_forever()
-
-Thread(target=run_server, daemon=True).start()
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 pending_files = {}
@@ -270,9 +256,8 @@ async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_
             await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
 
 def main():
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token: return
-    application = ApplicationBuilder().token(token).build()
+    if not TOKEN: return
+    application = ApplicationBuilder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("delete", delete_material_command))
@@ -280,9 +265,14 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
-    print("Bot is running cleanly...")
-    # استخدام drop_pending_updates=True لقتل أي رسائل قديمة متراكمة ومنع التعارض
-    application.run_polling(drop_pending_updates=True)
+    port = int(os.environ.get("PORT", 10000))
+    # تشغيل النظام بنظام Webhook المستقر تماماً على Render
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        secret_token="secret_token_123",
+        webhook_url=f"{RENDER_URL}/{TOKEN}"
+    )
 
 if __name__ == "__main__":
     main()
