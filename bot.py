@@ -3,7 +3,7 @@ import logging
 import psycopg2
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -54,6 +54,20 @@ def get_materials_from_db(section):
         return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
     except: return []
 
+def get_material_by_id(mat_id):
+    try:
+        conn = get_db()
+        if not conn: return None
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, title, file_id FROM materials WHERE id = %s", (mat_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if row:
+            return {"id": row[0], "title": row[1], "file_id": row[2]}
+        return None
+    except: return None
+
 def delete_material_from_db(file_id):
     try:
         conn = get_db()
@@ -67,7 +81,6 @@ def delete_material_from_db(file_id):
         return deleted
     except: return False
 
-# سيرفر خفيف للحفاظ على نشاط البورت في Render
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -119,6 +132,13 @@ DUAS_LIST = (
     "9. سُبْحَانَ اللَّهِ وَبِحَمْدِهِ، سُبْحَانَ اللَّهِ الْعَظِيمِ.\n"
     "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
+
+async def post_init(application):
+    # تعيين زر "القائمة" وأوامر البوت تلقائياً لدى تيليجرام
+    commands = [
+        BotCommand("start", "تشغيل البوت وعرض مواد الصف الثاني عشر 🎓"),
+    ]
+    await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
@@ -221,11 +241,38 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"📁 قسم **{sec_title}** لا توجد فيه ملفات مرفوعة حالياً.", parse_mode="Markdown")
             return
             
+        file_keyboard = []
         for item in items:
-            try:
-                if item["file_id"]:
-                    await context.bot.send_document(chat_id=query.message.chat_id, document=item["file_id"], caption=item["title"])
-            except: pass
+            title_short = item["title"] if len(item["title"]) < 40 else item["title"][:37] + "..."
+            file_keyboard.append([InlineKeyboardButton(f"📄 {title_short}", callback_data=f"getfile_{item['id']}")])
+        
+        if sec_key.startswith("struct_"):
+            file_keyboard.append([InlineKeyboardButton("🔙 عودة لقسم الهياكل", callback_data="open_structures")])
+        else:
+            file_keyboard.append([InlineKeyboardButton("🔙 عودة للقائمة الرئيسية", callback_data="back_to_main")])
+
+        await query.message.edit_text(
+            f"📂 ملفات قسم **{sec_title}**:\nاختر الملف الذي تريد فتحه وتحميله:",
+            reply_markup=InlineKeyboardMarkup(file_keyboard),
+            parse_mode="Markdown"
+        )
+        return
+
+    if data.startswith("getfile_"):
+        try:
+            mat_id = int(data.replace("getfile_", ""))
+            mat = get_material_by_id(mat_id)
+            if mat and mat["file_id"]:
+                await context.bot.send_document(
+                    chat_id=query.message.chat_id,
+                    document=mat["file_id"],
+                    caption=f"📄 {mat['title']}"
+                )
+            else:
+                await query.message.reply_text("⚠️ عذراً، هذا الملف غير موجود أو تم حذفه.")
+        except:
+            await query.message.reply_text("⚠️ حدث خطأ أثناء إرسال الملف.")
+        return
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
@@ -273,7 +320,7 @@ async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
     if not token: return
-    application = ApplicationBuilder().token(token).build()
+    application = ApplicationBuilder().token(token).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("delete", delete_material_command))
@@ -281,8 +328,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
-    print("Bot is starting polling smoothly...")
-    # يتأكد من إلغاء أي ويب هوك قديم والبدء فوراً دون أخطاء
+    print("Bot with Menu and File selection is running smoothly...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
