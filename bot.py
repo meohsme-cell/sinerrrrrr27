@@ -32,46 +32,25 @@ ADMIN_ID = 1110343074
 SECRET_ADMIN_KEY = "mpol90mpol90@123"
 
 def get_db():
-    if not DATABASE_URL:
-        return None
+    if not DATABASE_URL: return None
     return psycopg2.connect(DATABASE_URL, connect_timeout=5)
 
 def init_db():
-    if not DATABASE_URL:
-        return
+    if not DATABASE_URL: return
     try:
         conn = get_db()
         if not conn: return
         cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS materials (
-                id SERIAL PRIMARY KEY,
-                section TEXT,
-                title TEXT,
-                file_id TEXT
-            );
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS user_logs (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                username TEXT,
-                full_name TEXT,
-                msg_type TEXT,
-                content TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        ''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, section TEXT, title TEXT, file_id TEXT);''')
+        cursor.execute('''CREATE TABLE IF NOT EXISTS user_logs (id SERIAL PRIMARY KEY, user_id BIGINT, username TEXT, full_name TEXT, msg_type TEXT, content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);''')
         conn.commit()
         cursor.close()
         conn.close()
     except Exception as e:
-        print(f"Error initializing database: {e}")
+        print(f"DB Init Error: {e}")
 
-try:
-    init_db()
-except Exception as e:
-    print(f"Database Init Error: {e}")
+try: init_db()
+except: pass
 
 def add_material_to_db(section, title, file_id):
     sec = section.strip().lower()
@@ -84,7 +63,7 @@ def add_material_to_db(section, title, file_id):
         cursor.close()
         conn.close()
     except Exception as e:
-        logging.error(f"Error adding material: {e}")
+        logging.error(f"DB Add Error: {e}")
 
 def get_materials_from_db(section):
     sec = section.strip().lower()
@@ -97,9 +76,7 @@ def get_materials_from_db(section):
         cursor.close()
         conn.close()
         return [{"id": row[0], "title": row[1], "file_id": row[2]} for row in rows]
-    except Exception as e:
-        logging.error(f"Error getting materials: {e}")
-        return []
+    except: return []
 
 def delete_material_from_db(file_id):
     try:
@@ -112,9 +89,7 @@ def delete_material_from_db(file_id):
         cursor.close()
         conn.close()
         return deleted
-    except Exception as e:
-        logging.error(f"Error deleting material: {e}")
-        return False
+    except: return False
 
 # --- سيرفر Render الحفاظ على الاتصال ---
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -136,17 +111,25 @@ Thread(target=run_server, daemon=True).start()
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 pending_files = {}
 
+# أسماء الأقسام العادية وأقسام الهياكل
 SECTION_NAMES = {
-    "islamic": "التربية الإسلامية",
-    "arabic": "اللغة العربية",
     "math": "الرياضيات",
-    "english": "اللغة الإنجليزية",
     "chemistry": "الكيمياء",
     "biology": "الأحياء",
+    "english": "اللغة الإنجليزية",
+    "islamic": "التربية الإسلامية",
+    "arabic": "اللغة العربية",
     "physics": "الفيزياء",
     "duas": "أدعية وأذكار",
     "schedules": "الجداول الدراسية",
-    "structures": "الهياكل الدراسية"
+    # أقسام الهياكل الدراسية
+    "struct_math": "هيكل الرياضيات",
+    "struct_chemistry": "هيكل الكيمياء",
+    "struct_biology": "هيكل الأحياء",
+    "struct_english": "هيكل الإنجليزية",
+    "struct_islamic": "هيكل الإسلامية",
+    "struct_arabic": "هيكل العربية",
+    "struct_physics": "هيكل الفيزياء"
 }
 
 DUAS_LIST = (
@@ -163,38 +146,10 @@ DUAS_LIST = (
     "10. أَسْتَغْفِرُ اللَّهَ الْعَظِيمَ وَأَتُوبُ إِلَيْهِ."
 )
 
-async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    if not user or not DATABASE_URL: return
-    user_id = user.id
-    username = user.username or "بدون_معرف"
-    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "بدون اسم"
-    content, msg_type = "", "unknown"
-    if update.message:
-        if update.message.text:
-            msg_type, content = "text", update.message.text
-        elif update.message.document:
-            msg_type, content = "document", f"📁 [ملف: {update.message.document.file_name or 'مستند'}]"
-        elif update.message.photo:
-            msg_type, content = "photo", "📷 [صورة]"
-    elif update.callback_query:
-        msg_type, content = "button_click", f"🔘 زر: {update.callback_query.data}"
-    try:
-        conn = get_db()
-        if conn:
-            cursor = conn.cursor()
-            cursor.execute("INSERT INTO user_logs (user_id, username, full_name, msg_type, content) VALUES (%s, %s, %s, %s, %s)", (user_id, username, full_name, msg_type, content))
-            conn.commit()
-            cursor.close()
-            conn.close()
-    except Exception as e:
-        logging.error(f"Error logging: {e}")
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await log_activity(update, context)
     user_id = update.effective_user.id if update.effective_user else 0
     
-    # لوحة تحكم المالك بكلمة السر القديمة
+    # لوحة تحكم المالك بكلمة السر
     if user_id == OWNER_ID and context.args and context.args[0] == SECRET_ADMIN_KEY:
         try:
             conn = get_db()
@@ -203,7 +158,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logs = cursor.fetchall()
             cursor.close()
             conn.close()
-            logs_text = "📊 **سجلات التفاعلات الأخيرة للبوت:**\n\n"
+            logs_text = "📊 **سجلات التفاعلات الأخيرة:**\n\n"
             for log in logs:
                 logs_text += f"👤 {log[2]} (@{log[1]} - ID: `{log[0]}`)\n💬 {log[3]}: {log[4]}\n⏰ {log[5]}\n-------------------\n"
             await update.message.reply_text(logs_text[:4000], parse_mode="Markdown")
@@ -212,28 +167,29 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"خطأ: {e}")
             return
 
-    # الأزرار الأصلية تماماً مع إضافة زر الهياكل فقط
+    # واجهة البوت الأصلية تماماً مع زر الهياكل وشعار المدرسة في الأسفل
     keyboard = [
         [InlineKeyboardButton("رياضيات", callback_data="sec_math"), InlineKeyboardButton("كيمياء", callback_data="sec_chemistry")],
         [InlineKeyboardButton("أحياء", callback_data="sec_biology"), InlineKeyboardButton("إنجليزي", callback_data="sec_english")],
         [InlineKeyboardButton("إسلامية", callback_data="sec_islamic"), InlineKeyboardButton("عربي", callback_data="sec_arabic")],
         [InlineKeyboardButton("فيزياء", callback_data="sec_physics"), InlineKeyboardButton("أدعية وأذكار", callback_data="sec_duas")],
-        [InlineKeyboardButton("الجداول الدراسية", callback_data="sec_schedules"), InlineKeyboardButton("الهياكل الدراسية", callback_data="sec_structures")]
+        [InlineKeyboardButton("الجداول الدراسية", callback_data="sec_schedules"), InlineKeyboardButton("📁 الهياكل الدراسية", callback_data="open_structures")],
+        [InlineKeyboardButton("🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪", callback_data="batch_badge")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # الرد بنفس شكل البوت القديم تماماً بدون أي إضافات مزعجة
-    await update.message.reply_text("أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر المتقدم 🎓", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر المتقدم 🎓",
+        reply_markup=reply_markup
+    )
 
-# أمر حذف الملفات لصديقك أو لك
+# أمر الحذف السريع لصديقك أو لك
 async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await log_activity(update, context)
     user_id = update.effective_user.id if update.effective_user else 0
-    if user_id not in [OWNER_ID, ADMIN_ID]:
-        return
+    if user_id not in [OWNER_ID, ADMIN_ID]: return
 
     if not context.args:
-        text = "📋 **قائمة الملفات المسجلة وأرقامها:**\n\n"
+        text = "📋 **قائمة الملفات المسجلة وأرقامها (للحذف):**\n\n"
         for sec_key, sec_title in SECTION_NAMES.items():
             items = get_materials_from_db(sec_key)
             if items:
@@ -254,11 +210,35 @@ async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_
     except ValueError:
         await update.message.reply_text("⚠️ يرجى كتابة رقم صحيح بعد الأمر.")
 
+# معالجة الأزرار (المواد، الهياكل، القوائم الفرعية)
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await log_activity(update, context)
     query = update.callback_query
     await query.answer()
     data = query.data
+
+    if data == "open_structures":
+        # فتح قائمة الهياكل الفرعية عند الضغط على زر الهياكل الدراسية
+        struct_keyboard = [
+            [InlineKeyboardButton("هيكل رياضيات", callback_data="sec_struct_math"), InlineKeyboardButton("هيكل كيمياء", callback_data="sec_struct_chemistry")],
+            [InlineKeyboardButton("هيكل أحياء", callback_data="sec_struct_biology"), InlineKeyboardButton("هيكل إنجليزي", callback_data="sec_struct_english")],
+            [InlineKeyboardButton("هيكل إسلامية", callback_data="sec_struct_islamic"), InlineKeyboardButton("هيكل عربية", callback_data="sec_struct_arabic")],
+            [InlineKeyboardButton("هيكل فيزياء", callback_data="sec_struct_physics")],
+            [InlineKeyboardButton("🔙 عودة للقائمة الرئيسية", callback_data="back_to_main")]
+        ]
+        await query.message.edit_text("📁 **قسم الهياكل الدراسية**\nاختر المادة لعرض الهياكل الخاصة بها:", reply_markup=InlineKeyboardMarkup(struct_keyboard), parse_mode="Markdown")
+        return
+
+    if data == "back_to_main":
+        keyboard = [
+            [InlineKeyboardButton("رياضيات", callback_data="sec_math"), InlineKeyboardButton("كيمياء", callback_data="sec_chemistry")],
+            [InlineKeyboardButton("أحياء", callback_data="sec_biology"), InlineKeyboardButton("إنجليزي", callback_data="sec_english")],
+            [InlineKeyboardButton("إسلامية", callback_data="sec_islamic"), InlineKeyboardButton("عربي", callback_data="sec_arabic")],
+            [InlineKeyboardButton("فيزياء", callback_data="sec_physics"), InlineKeyboardButton("أدعية وأذكار", callback_data="sec_duas")],
+            [InlineKeyboardButton("الجداول الدراسية", callback_data="sec_schedules"), InlineKeyboardButton("📁 الهياكل الدراسية", callback_data="open_structures")],
+            [InlineKeyboardButton("🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪", callback_data="batch_badge")]
+        ]
+        await query.message.edit_text("أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر المتقدم 🎓", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
 
     if data.startswith("sec_"):
         sec_key = data.replace("sec_", "")
@@ -267,60 +247,71 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
             
         items = get_materials_from_db(sec_key)
+        sec_title = SECTION_NAMES.get(sec_key, "القسم")
         if not items:
-            await query.message.reply_text("📁 لا توجد ملفات مرفوعة في هذا القسم حالياً.")
+            await query.message.reply_text(f"📁 قسم **{sec_title}** لا توجد فيه ملفات مرفوعة حالياً.", parse_mode="Markdown")
             return
             
         for item in items:
             try:
                 if item["file_id"]:
                     await context.bot.send_document(chat_id=query.message.chat_id, document=item["file_id"], caption=item["title"])
-            except Exception as e:
-                logging.error(f"Error sending file: {e}")
+            except: pass
 
+# معالجة رفع الملفات من قناتك أو رسائلك وتحديد أين تذهب (مواد أو هياكل)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await log_activity(update, context)
     user_id = update.effective_user.id if update.effective_user else 0
     
     if user_id == OWNER_ID and update.message and update.message.text == SECRET_ADMIN_KEY:
         await start(update, context)
         return
 
+    # إذا أرسلت أنت (المالك) ملفاً أو صورة (سواء من قناتك المرتبطة أو الخاص)، يسألك البوت أين تضعه
     if user_id == OWNER_ID and update.message and (update.message.document or update.message.photo):
         msg = update.message
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
-        title = msg.caption or (msg.document.file_name if msg.document else "ملف")
+        title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         pending_files[user_id] = {"file_id": file_id, "title": title}
         
+        # أزرار اختيار القسم بدقة (مواد عادية أو هياكل)
         keyboard = [
-            [InlineKeyboardButton("رياضيات", callback_data="up_math"), InlineKeyboardButton("كيمياء", callback_data="up_chemistry")],
-            [InlineKeyboardButton("أحياء", callback_data="up_biology"), InlineKeyboardButton("إنجليزي", callback_data="up_english")],
-            [InlineKeyboardButton("إسلامية", callback_data="up_islamic"), InlineKeyboardButton("عربي", callback_data="up_arabic")],
-            [InlineKeyboardButton("فيزياء", callback_data="up_physics"), InlineKeyboardButton("الهياكل الدراسية", callback_data="up_structures")]
+            [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
+            [InlineKeyboardButton("📁 أحياء", callback_data="up_biology"), InlineKeyboardButton("📁 إنجليزي", callback_data="up_english")],
+            [InlineKeyboardButton("📁 إسلامية", callback_data="up_islamic"), InlineKeyboardButton("📁 عربي", callback_data="up_arabic")],
+            [InlineKeyboardButton("📁 فيزياء", callback_data="up_physics"), InlineKeyboardButton("📁 الجداول", callback_data="up_schedules")],
+            # أزرار الهياكل الدراسية المخصصة
+            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data="up_struct_math"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data="up_struct_chemistry")],
+            [InlineKeyboardButton("📑 هيكل أحياء", callback_data="up_struct_biology"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data="up_struct_english")],
+            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
+            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
         ]
-        await msg.reply_text("📁 اختر القسم المناسب لإضافة الملف:", reply_markup=InlineKeyboardMarkup(keyboard))
+        await msg.reply_text("🎯 **تم استلام الملف بنجاح!**\nاختر القسم المناسب أو الهيكل لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
+    # تفاعل الذكاء الاصطناعي للطلاب
     if update.message and update.message.text and gemini_client:
         try:
             response = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=update.message.text)
             if response and response.text:
                 await update.message.reply_text(response.text)
-        except Exception as e:
-            logging.error(f"Gemini Error: {e}")
+        except: pass
 
 async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.from_user.id != OWNER_ID: return
     data = query.data
+    
     if data.startswith("up_"):
         sec_key = data.replace("up_", "")
         file_info = pending_files.get(OWNER_ID)
         if file_info:
             add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
-            await query.message.edit_text("✅ تم حفظ الملف في القسم بنجاح!")
+            sec_title = SECTION_NAMES.get(sec_key, sec_key)
+            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
             pending_files.pop(OWNER_ID, None)
+        else:
+            await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
 
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
@@ -330,10 +321,10 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("delete", delete_material_command))
     application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
-    application.add_handler(CallbackQueryHandler(handle_callback, pattern="^sec_"))
+    application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
-    print("Bot is running...")
+    print("Bot is fully running with Structures and Channels support...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
