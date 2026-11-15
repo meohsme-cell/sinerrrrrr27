@@ -186,7 +186,10 @@ DUAS_LIST = (
 )
 
 async def post_init(application):
-    commands = [BotCommand("start", "تشغيل البوت وعرض مواد الصف الثاني عشر 🎓")]
+    commands = [
+        BotCommand("start", "تشغيل البوت وعرض مواد الصف الثاني عشر 🎓"),
+        BotCommand("delete", "عرض وحذف الملفات المسجلة 🗑️")
+    ]
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -225,6 +228,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # إذا لم يكتب رقم بعد الأمر، اعرض له كافة الملفات مرتبة حسب الأقسام
     if not context.args:
         text = "📋 **قائمة كافة الملفات مرتبة حسب الأقسام والمواد (للحذف):**\n\n"
         has_items = False
@@ -251,12 +255,13 @@ async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(text, parse_mode="Markdown")
         return
 
+    # إذا أرسل رقم بعد الأمر (مثال: /delete 3)
     try:
         file_id = int(context.args[0])
         if delete_material_from_db(file_id):
             await update.message.reply_text(f"✅ تم حذف الملف رقم `{file_id}` بنجاح.", parse_mode="Markdown")
         else:
-            await update.message.reply_text(f"⚠️ لم يتم العثور على الملف رقم `{file_id}`.")
+            await update.message.reply_text(f"⚠️ لم يتم العثور على الملف رقم `{file_id}` أو تم حذفه مسبقاً.")
     except ValueError:
         await update.message.reply_text("⚠️ يرجى كتابة رقم صحيح بعد الأمر (مثال: `/delete 1`).", parse_mode="Markdown")
 
