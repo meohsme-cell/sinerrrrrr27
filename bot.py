@@ -267,6 +267,23 @@ async def process_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(text, parse_mode="Markdown")
 
+async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in [OWNER_ID, ADMIN_ID]: return
+    data = query.data
+    
+    if data.startswith("up_"):
+        sec_key = data.replace("up_", "")
+        file_info = get_pending_from_db(query.from_user.id)
+        if file_info:
+            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+            sec_title = SECTION_NAMES.get(sec_key, sec_key)
+            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
+            clear_pending_from_db(query.from_user.id)
+        else:
+            await query.message.edit_text("⚠️ انتهت صلاحية الملف أو تم حفظه مسبقاً، أرسله مرة أخرى من فضلك.")
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -340,8 +357,68 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⚠️ حدث خطأ أثناء إرسال الملف.")
         return
 
-    if data.startswith("up_"):
-        sec_key = data.replace("up_", "")
-        file_info = get_pending_from_db(query.from_user.id)
-        if file_info:
-            add_material_to_db
+async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+    text = update.message.text.strip()
+
+    if user_id in [OWNER_ID, ADMIN_ID]:
+        if text.lower() in ["del", "/delete", "حذف"]:
+            await process_delete(update, context)
+            return
+            
+        if text.isdigit():
+            file_id = int(text)
+            if delete_material_from_db(file_id):
+                await update.message.reply_text(f"✅ تم حذف الملف رقم `{file_id}` بنجاح من قاعدة البيانات.", parse_mode="Markdown")
+            else:
+                await update.message.reply_text(f"⚠️ لم يتم العثور على ملف يحمل الرقم `{file_id}` أو أنه محذوف مسبقاً.")
+            return
+
+        if text == SECRET_ADMIN_KEY:
+            await start(update, context)
+            return
+
+async def handle_document_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not (update.message.document or update.message.photo):
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+
+    if user_id in [OWNER_ID, ADMIN_ID]:
+        msg = update.message
+        file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
+        title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
+        
+        save_pending_to_db(user_id, file_id, title)
+        
+        keyboard = [
+            [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
+            [InlineKeyboardButton("📁 أحياء", callback_data="up_biology"), InlineKeyboardButton("📁 إنجليزي", callback_data="up_english")],
+            [InlineKeyboardButton("📁 إسلامية", callback_data="up_islamic"), InlineKeyboardButton("📁 عربي", callback_data="up_arabic")],
+            [InlineKeyboardButton("📁 فيزياء", callback_data="up_physics"), InlineKeyboardButton("📁 الجداول", callback_data="up_schedules")],
+            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data="up_struct_math"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data="up_struct_chemistry")],
+            [InlineKeyboardButton("📑 هيكل أحياء", callback_data="up_struct_biology"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data="up_struct_english")],
+            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
+            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
+        ]
+        await msg.reply_text("🎯 **تم استلام الملف بنجاح وتخزينه في قائمة الانتظار!**\nاختر القسم المناسب لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+def main():
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token: return
+    application = ApplicationBuilder().token(token).post_init(post_init).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("delete", process_delete))
+    application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_document_message))
+
+    print("Bot is running perfectly...")
+    application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
