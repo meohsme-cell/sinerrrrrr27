@@ -222,32 +222,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id if update.effective_user else 0
-    
-    # التحقق من الأدمن (نقبل الـ OWNER_ID أو أي شخص يرسلها للإدارة للتأكد)
-    if user_id not in [OWNER_ID, ADMIN_ID]:
-        # إذا لم يتم التعرف على الـ ID تلقائياً، سنسمح بعرض الملفات للتسهيل أو نتحقق
-        pass
-
-    # إذا لم يكتب رقم بعد الأمر، اعرض له كل الملفات الموجودة في قاعدة البيانات
+    # إذا لم يكتب رقم بعد الأمر، اعرض له كل الملفات مصنفة حسب الأقسام والمواد
     if not context.args:
-        text = "📋 **قائمة كافة الملفات المسجلة وأرقامها (للحذف):**\n\n"
+        text = "📋 **قائمة كافة الملفات مرتبة حسب الأقسام والمواد (للحذف):**\n\n"
         has_items = False
+        
         for sec_key, sec_title in SECTION_NAMES.items():
             items = get_materials_from_db(sec_key)
             if items:
                 has_items = True
                 text += f"📂 **{sec_title}**:\n"
                 for item in items:
-                    text += f"  - رقم (`{item['id']}`): {item['title']}\n"
+                    text += f"   🔹 رقم (`{item['id']}`): {item['title']}\n"
                 text += "\n"
         
         if not has_items:
             await update.message.reply_text("📁 قاعدة البيانات فارغة تماماً ولا توجد أي ملفات مرفوعة حتى الآن.")
             return
 
-        text += "⚠️ للحذف أرسل هكذا:\n`/delete [رقم_الملف]`"
-        await update.message.reply_text(text, parse_mode="Markdown")
+        text += "⚠️ **طريقة الحذف:** أرسل الأمر متبوعاً برقم الملف هكذا:\n`/delete [رقم_الملف]` (مثال: `/delete 5`)"
+        
+        # تقسيم الرسالة إذا كانت طويلة لكي لا ترفضها تيليجرام
+        if len(text) > 4000:
+            for i in range(0, len(text), 4000):
+                await update.message.reply_text(text[i:i+4000], parse_mode="Markdown")
+        else:
+            await update.message.reply_text(text, parse_mode="Markdown")
         return
 
     # إذا كتب رقم بعد الأمر (مثلاً /delete 3)
@@ -345,51 +345,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         
-        save_pending_to_db(user_id, file_id, title)
-        
-        keyboard = [
-            [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
-            [InlineKeyboardButton("📁 أحياء", callback_data="up_biology"), InlineKeyboardButton("📁 إنجليزي", callback_data="up_english")],
-            [InlineKeyboardButton("📁 إسلامية", callback_data="up_islamic"), InlineKeyboardButton("📁 عربي", callback_data="up_arabic")],
-            [InlineKeyboardButton("📁 فيزياء", callback_data="up_physics"), InlineKeyboardButton("📁 الجداول", callback_data="up_schedules")],
-            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data="up_struct_math"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data="up_struct_chemistry")],
-            [InlineKeyboardButton("📑 هيكل أحياء", callback_data="up_struct_biology"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data="up_struct_english")],
-            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
-            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
-        ]
-        await msg.reply_text("🎯 **تم استلام الملف بنجاح!**\nاختر القسم المناسب أو الهيكل لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        return
-
-async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.from_user.id != OWNER_ID: return
-    data = query.data
-    
-    if data.startswith("up_"):
-        sec_key = data.replace("up_", "")
-        file_info = get_pending_from_db(OWNER_ID)
-        if file_info:
-            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
-            sec_title = SECTION_NAMES.get(sec_key, sec_key)
-            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
-            clear_pending_from_db(OWNER_ID)
-        else:
-            await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
-
-def main():
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token: return
-    application = ApplicationBuilder().token(token).post_init(post_init).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("delete", delete_material_command))
-    application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-
-    print("Bot is running perfectly...")
-    application.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+        save_pending_to_db(user_id, file
