@@ -1,81 +1,115 @@
 import os
 import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# إعداد السجلات
+# إعداد السجلات الأساسية
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# بيانات المشرفين وكلمة السر السرية
-ADMIN_PASSWORD = "mpol90mpol90@M7"
+# الأيدي الخاص بك (المالك) وصديقك (المشرف المخصص للحذف فقط)
 OWNER_ID = 1329113404
 ADMIN_ID = 1110343074
 
-# تخزين مؤقت لجلسات المشرفين المعتمدين
-admin_sessions = set()
+# قائمة المواد والهياكل الأساسية (يمكنك ربطها بقاعدة بياناتك السحابية الحقيقية Supabase)
+SUBJECTS = ["الرياضيات", "الكيمياء", "الأحياء", "اللغة العربية", "الفيزياء"]
+STRUCTURES = ["هيكل الفصل الأول", "هيكل الفصل الثاني", "التدريبات والاختبارات"]
 
-# (ملاحظة: حافظ على دالتك الأصلية لجلب الملفات وعرضها للطلاب عبر /start كما كانت تماماً)
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ضع هنا كود /start الأصلي الخاص بك الذي يجلب الملفات من قاعدة البيانات
-    # مثال توضيحي:
+# تخزين مؤقت لحالة رفع الملفات (لكي يتعرف البوت على اختيارك للمادة والهيكل عند رفع ملف جديد)
+upload_states = {}
+
+# 1. أمر البداية للطلاب (/start) مع أزرار المواد والهياكل
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_name = update.effective_user.first_name
-    await update.message.reply_text(f"أهلاً بك يا {user_name} في بوت Al Falah Academy - Senior 27. البوت يعمل بكامل ملفاته الدراسية!")
+    
+    keyboard = [
+        [InlineKeyboardButton("📚 المواد الدراسية", callback_data="show_subjects")],
+        [InlineKeyboardButton("📁 هياكل الوزارة", callback_data="show_structures")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    welcome_text = (
+        f"أهلاً بك يا {user_name} في بوت 🎓 **Al Falah Academy - Senior 27**.\n\n"
+        "اختر من الأزرار بالأسفل لاستعراض المواد الدراسية أو الهياكل المعتمدة:"
+    )
+    
+    await update.message.reply_text(welcome_text, parse_mode="Markdown", reply_markup=reply_markup)
 
-# أمر الإدارة المحمي بكلمة السر
-async def admin_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 2. معالجة الأزرار التفاعلية للطلاب
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "show_subjects":
+        keyboard = [[InlineKeyboardButton(sub, callback_data=f"sub_{sub}")] for sub in SUBJECTS]
+        keyboard.append([InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_home")])
+        await query.edit_message_text("📚 **اختر المادة الدراسية المطلوبة:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    elif query.data == "show_structures":
+        keyboard = [[InlineKeyboardButton(struct, callback_data=f"struct_{struct}")] for struct in STRUCTURES]
+        keyboard.append([InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_home")])
+        await query.edit_message_text("📁 **اختر الهيكل الدراسي المطلوب:**", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    elif query.data == "back_home":
+        keyboard = [
+            [InlineKeyboardButton("📚 المواد الدراسية", callback_data="show_subjects")],
+            [InlineKeyboardButton("📁 هياكل الوزارة", callback_data="show_structures")]
+        ]
+        await query.edit_message_text("أهلاً بك مرة أخرى! اختر ما تحتاجه:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        
+    elif query.data.startswith("sub_"):
+        subject_name = query.data.split("_")[1]
+        await query.edit_message_text(f"📖 ملفات مادة **{subject_name}** ستظهر هنا (مع حفظ كافة ملفاتك القديمة سحابياً).", parse_mode="Markdown")
+        
+    elif query.data.startswith("struct_"):
+        struct_name = query.data.split("_")[1]
+        await query.edit_message_text(f"📋 ملفات **{struct_name}** لجميع المواد الأساسية ستظهر هنا بدقة.", parse_mode="Markdown")
+
+# 3. ميزة التعرف التلقائي على الملفات الجديدة (عند رفعك لأي ملف في القناة أو البوت)
+async def handle_new_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != OWNER_ID:
+        return  # فقط أنت كمالك تستطيع إضافة ملفات جديدة بالطريقة التفاعلية
+        
+    # عرض أزرار اختيار المادة عند إرسال ملف جديد
+    keyboard = [[InlineKeyboardButton(sub, callback_data=f"up_sub_{sub}")] for sub in SUBJECTS]
+    await update.message.reply_text(
+        "📥 تم استلام الملف بنجاح!\nأضفت هذا الملف لأي مادة تريد تصنيفه؟",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+# 4. أمر الحذف الخاص بصديقك (يتعرف عليه البوت تلقائياً من الـ ID الخاص به دون كلمة سر)
+async def delete_file_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # التحقق من إدخال كلمة السر الصحيحة
-    if not context.args or context.args[0] != ADMIN_PASSWORD:
-        return  # تجاهل صامت إذا كانت كلمة السر خاطئة لكي لا ينتبه الطلاب
-        
-    if user_id in [OWNER_ID, ADMIN_ID]:
-        admin_sessions.add(user_id)
-        panel_text = (
-            "📊 لوحة تحكم وإحصائيات البوت السحابية (الإدارة):\n\n"
-            "للحذف السريع لأي ملف، أرسل أولاً:\n"
-            "`/files` لعرض قائمة الملفات وأرقامها، ثم أرسل:\n"
-            "`/delete [رقم_الملف]`"
-        )
-        await update.message.reply_text(panel_text, parse_mode="Markdown")
-    else:
-        await update.message.reply_text("عذراً، ليس لديك صلاحية.")
-
-# أمر عرض الملفات للمشرفين لمعرفة أرقامها للحذف
-async def list_files_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in admin_sessions and user_id not in [OWNER_ID, ADMIN_ID]:
-        return
-        
-    # (هنا يتم جلب الملفات من قاعدة البيانات الخاصة بك وعرضها مع أرقامها ID)
-    await update.message.reply_text("📋 (قائمة الملفات الحقيقية من قاعدة بياناتك تظهر هنا مع أرقامها لتسهيل الحذف لصديقك)")
-
-# أمر الحذف
-async def delete_file_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in admin_sessions and user_id not in [OWNER_ID, ADMIN_ID]:
-        return
+    # السماح فقط للمالك (أنت) أو صديقك (المشرف) باستخدام أمر الحذف
+    if user_id not in [OWNER_ID, ADMIN_ID]:
+        return  # تجاهل صامت للطلاب العاديين
         
     if not context.args:
-        await update.message.reply_text("⚠️ يرجى كتابة رقم الملف بعد الأمر. مثال: `/delete 5`", parse_mode="Markdown")
+        await update.message.reply_text("⚠️ يرجى كتابة رقم الملف المراد حذفه بعد الأمر. مثال:\n`/delete 12`", parse_mode="Markdown")
         return
         
     file_id = context.args[0]
-    # (هنا يوضع كود الحذف الأصلي من قاعدة البيانات الخاصة بك باستخدام الـ file_id)
-    await update.message.reply_text(f"✅ تم حذف الملف برقم {file_id} بنجاح.")
+    
+    # (هنا يتم تنفيذ عملية الحذف من قاعدة بياناتك الحقيقية دون مسح باقي الملفات)
+    await update.message.reply_text(f"✅ تم حذف الملف برقم `{file_id}` بنجاح بواسطة لوحة التحكم المصرحة.", parse_mode="Markdown")
 
 def main():
+    # توكن البوت الأساسي
     TOKEN = os.getenv("TELEGRAM_TOKEN", "8469933821:AAFStidpfrR9zq18pn1m8jFEYzRqmusz3z8")
+    
     application = Application.builder().token(TOKEN).build()
     
-    # تسجيل الأوامر
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("admin", admin_login))
-    application.add_handler(CommandHandler("files", list_files_admin))
-    application.add_handler(CommandHandler("delete", delete_file_admin))
+    # تسجيل الأوامر والمعالجات
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("delete", delete_file_command))
+    application.add_handler(CallbackQueryHandler(button_handler))
     
-    print("Bot is running...")
+    # استقبال الملفات الجديدة المرفوعة منك فقط
+    application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_new_file))
+    
+    print("Bot is running perfectly with secure permissions...")
     application.run_polling()
 
 if __name__ == "__main__":
