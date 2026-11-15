@@ -100,7 +100,10 @@ def save_pending_to_db(owner_id, file_id, title):
         conn = get_db()
         if not conn: return
         cursor = conn.cursor()
-        cursor.execute("INSERT INTO pending_uploads (owner_id, file_id, title) VALUES (%s, %s, %s) ON CONFLICT (owner_id) DO UPDATE SET file_id = EXCLUDED.file_id, title = EXCLUDED.title", (owner_id, file_id, title))
+        cursor.execute(
+            "INSERT INTO pending_uploads (owner_id, file_id, title) VALUES (%s, %s, %s) ON CONFLICT (owner_id) DO UPDATE SET file_id = EXCLUDED.file_id, title = EXCLUDED.title",
+            (owner_id, file_id, title)
+        )
         conn.commit()
         cursor.close()
         conn.close()
@@ -222,7 +225,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # إذا لم يكتب رقم بعد الأمر، اعرض له كل الملفات مصنفة حسب الأقسام والمواد
     if not context.args:
         text = "📋 **قائمة كافة الملفات مرتبة حسب الأقسام والمواد (للحذف):**\n\n"
         has_items = False
@@ -242,7 +244,6 @@ async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_
 
         text += "⚠️ **طريقة الحذف:** أرسل الأمر متبوعاً برقم الملف هكذا:\n`/delete [رقم_الملف]` (مثال: `/delete 5`)"
         
-        # تقسيم الرسالة إذا كانت طويلة لكي لا ترفضها تيليجرام
         if len(text) > 4000:
             for i in range(0, len(text), 4000):
                 await update.message.reply_text(text[i:i+4000], parse_mode="Markdown")
@@ -250,7 +251,6 @@ async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(text, parse_mode="Markdown")
         return
 
-    # إذا كتب رقم بعد الأمر (مثلاً /delete 3)
     try:
         file_id = int(context.args[0])
         if delete_material_from_db(file_id):
@@ -345,4 +345,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         
-        save_pending_to_db(user_id, file
+        save_pending_to_db(user_id, file_id, title)
+        
+        keyboard = [
+            [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
+            [InlineKeyboardButton("📁 أحياء", callback_data="up_biology"), InlineKeyboardButton("📁 إنجليزي", callback_data="up_english")],
+            [InlineKeyboardButton("📁 إسلامية", callback_data="up_islamic"), InlineKeyboardButton("📁 عربي", callback_data="up_arabic")],
+            [InlineKeyboardButton("📁 فيزياء", callback_data="up_physics"), InlineKeyboardButton("📁 الجداول", callback_data="up_schedules")],
+            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data="up_struct_math"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data="up_struct_chemistry")],
+            [InlineKeyboardButton("📑 هيكل أحياء", callback_data="up_struct_biology"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data="up_struct_english")],
+            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
+            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
+        ]
+        await msg.reply_text("🎯 **تم استلام الملف بنجاح!**\nاختر القسم المناسب أو الهيكل لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != OWNER_ID: return
+    data = query.data
+    
+    if data.startswith("up_"):
+        sec_key = data.replace("up_", "")
+        file_info = get_pending_from_db(OWNER_ID)
+        if file_info:
+            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+            sec_title = SECTION_NAMES.get(sec_key, sec_key)
+            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
+            clear_pending_from_db(OWNER_ID)
+        else:
+            await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
+
+def main():
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token: return
+    application = ApplicationBuilder().token(token).post_init(post_init).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("delete", delete_material_command))
+    application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+
+    print("Bot is running perfectly...")
+    application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
