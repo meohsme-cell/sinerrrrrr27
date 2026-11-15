@@ -28,7 +28,10 @@ if GEMINI_API_KEY:
     except Exception as e:
         print(f"Gemini Init Error: {e}")
 
-ADMIN_ID = 1329113404
+# --- الصلاحيات والإداريين ---
+OWNER_ID = 1329113404        # آيدي المالك (أنت)
+ADMIN_ID = 1110343074        # آيدي المشرف المضاف حديثاً
+
 SECRET_ADMIN_KEY = "mpol90mpol90@888"
 
 def get_db():
@@ -233,4 +236,204 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         f"أهلاً بك يا {user_name} في بوت الصف الثاني عشر المتقدم!\n"
         "🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪\n\n"
-        "اختر المادة الدراسية التي تريدها من الأزرار أدناه، أو راسلني بأي سؤال وسأجيبك فوراً بالذكاء الاصطناعي
+        "اختر المادة الدراسية التي تريدها من الأزرار أدناه:"
+    )
+
+    if update.message:
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+    elif update.callback_query:
+        try:
+            await update.callback_query.message.edit_text(welcome_text, reply_markup=reply_markup)
+        except Exception:
+            await update.callback_query.message.reply_text(welcome_text, reply_markup=reply_markup)
+
+# --- 6. أمر الحذف الخاص بالإدارة (المالك + المشرف المعتمد) ---
+async def delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # التحقق مما إذا كان المستخدم هو المالك أو المشرف المضاف فقط
+    if user_id != OWNER_ID and user_id != ADMIN_ID:
+        await update.message.reply_text("⚠️ عذراً، هذا الأمر مخصص للإدارة فقط.")
+        return
+
+    # التحقق من وجود رقم الملف المراد حذفه
+    if not context.args:
+        # عرض قائمة الملفات المختصرة لتسهيل معرفة الأرقام على الإدارة
+        all_materials_text = "🗑️ **قائمة الملفات المخزنة للحذف:**\n\n"
+        total_count = 0
+        for sec_key in SECTION_NAMES.keys():
+            items = get_materials_from_db(sec_key)
+            for item in items:
+                all_materials_text += f"🆔 `{item['id']}` | {SECTION_NAMES[sec_key]}: {item['title']}\n"
+                total_count += 1
+
+        if total_count == 0:
+            await update.message.reply_text("📭 لا توجد أي ملفات مخزنة في البوت حالياً.")
+            return
+
+        all_materials_text += f"\n📌 للاستخدام الصحيح، اكتب الأمر متبوعاً برقم الملف:\n`/delete [رقم_الملف]`"
+        
+        # إذا كانت الرسالة طويلة، نقسمها أو نرسلها
+        if len(all_materials_text) > 4000:
+            await update.message.reply_text("القائمة طويلة جداً، يرجى كتابة الأمر مع رقم الملف مباشرة، مثال: `/delete 5`")
+        else:
+            await update.message.reply_text(all_materials_text, parse_mode="Markdown")
+        return
+
+    try:
+        file_id_to_delete = int(context.args[0])
+        success = delete_material_from_db(file_id_to_delete)
+        if success:
+            await update.message.reply_text(f"✅ تم حذف الملف برقم `ID: {file_id_to_delete}` بنجاح دون المساس بباقي الملفات.", parse_mode="Markdown")
+        else:
+            await update.message.reply_text(f"❌ لم يتم العثور على ملف بهذا الرقم (`ID: {file_id_to_delete}`). تأكد من الرقم الصحيح.")
+    except ValueError:
+        await update.message.reply_text("⚠️ يرجى كتابة رقم صحيح بعد الأمر. مثال: `/delete 12`")
+
+# --- معالجة الأزرار والتفاعل مع الأقسام ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await log_activity(update, context)
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data == "sec_duas":
+        keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_home")]]
+        await query.message.edit_text(DUAS_LIST, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if data == "back_home" or data == "batch_badge":
+        user_name = query.from_user.first_name if query.from_user else "طالب"
+        keyboard = [
+            [InlineKeyboardButton("التربية الإسلامية", callback_data="sec_islamic"), InlineKeyboardButton("اللغة العربية", callback_data="sec_arabic")],
+            [InlineKeyboardButton("الرياضيات", callback_data="sec_math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="sec_english")],
+            [InlineKeyboardButton("الكيمياء", callback_data="sec_chemistry"), InlineKeyboardButton("الأحياء", callback_data="sec_biology")],
+            [InlineKeyboardButton("الفيزياء", callback_data="sec_physics"), InlineKeyboardButton("أدعية وأذكار 🤲", callback_data="sec_duas")],
+            [InlineKeyboardButton("الجداول 📅", callback_data="sec_schedules")],
+            [InlineKeyboardButton("✨ Senior 27 | Al Falah Academy | MBZ", callback_data="batch_badge")]
+        ]
+        welcome_text = (
+            f"أهلاً بك يا {user_name} في بوت الصف الثاني عشر المتقدم!\n"
+            "🎓 Senior 27 | Al Falah Academy | MBZ 🇦🇪\n\n"
+            "اختر المادة الدراسية التي تريدها من الأزرار أدناه:"
+        )
+        await query.message.edit_text(welcome_text, reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    if data.startswith("sec_"):
+        sec_key = data.replace("sec_", "")
+        if sec_key in SECTION_NAMES:
+            sec_name = SECTION_NAMES[sec_key]
+            materials = get_materials_from_db(sec_key)
+
+            if not materials:
+                text = f"📂 **قائمة ملفات قسم ({sec_name}):**\n\nعذراً، لا توجد ملفات مرفوعة في هذا القسم حالياً."
+            else:
+                text = f"📂 **قائمة ملفات قسم ({sec_name}):**\nاضغط على الملف لتنزيله فوراً:\n"
+                for m in materials:
+                    text += f"\n• {m['title']}"
+
+            keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_home")]]
+            
+            # إذا كانت الملفات كثيرة، نرسل الرسالة أو نعدلها
+            try:
+                await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+            except Exception:
+                await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+            # إرسال الملفات الفعلية المرفوعة للقسم لكي يتمكن الطلاب من تحميلها
+            if materials:
+                for m in materials:
+                    try:
+                        await context.bot.send_document(chat_id=query.message.chat_id, document=m['file_id'], caption=m['title'])
+                    except Exception as e:
+                        logging.error(f"Error sending file {m['file_id']}: {e}")
+
+# --- استقبال الملفات من الإدارة لرفعها ---
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await log_activity(update, context)
+    user_id = update.effective_user.id
+    if user_id != OWNER_ID and user_id != ADMIN_ID:
+        return
+
+    message = update.message
+    if not message.document:
+        return
+
+    file_id = message.document.file_id
+    file_name = message.document.file_name or "ملف بدون اسم"
+    pending_files[user_id] = {"file_id": file_id, "title": file_name}
+
+    keyboard = [
+        [InlineKeyboardButton("التربية الإسلامية", callback_data="up_islamic"), InlineKeyboardButton("اللغة العربية", callback_data="up_arabic")],
+        [InlineKeyboardButton("الرياضيات", callback_data="up_math"), InlineKeyboardButton("اللغة الإنجليزية", callback_data="up_english")],
+        [InlineKeyboardButton("الكيمياء", callback_data="up_chemistry"), InlineKeyboardButton("الأحياء", callback_data="up_biology")],
+        [InlineKeyboardButton("الفيزياء", callback_data="up_physics"), InlineKeyboardButton("أدعية وأذكار", callback_data="up_duas")],
+        [InlineKeyboardButton("الجداول الدراسية", callback_data="up_schedules")]
+    ]
+    await message.reply_text(f"📁 تم استلام الملف: `{file_name}`\n\nالرجاء اختيار القسم الذي تريد رفع الملف إليه:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+async/def upload_section_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    if user_id != OWNER_ID and user_id != ADMIN_ID:
+        return
+
+    data = query.data
+    if data.startswith("up_"):
+        sec_key = data.replace("up_", "")
+        if user_id in pending_files:
+            file_info = pending_files.pop(user_id)
+            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+            sec_display = SECTION_NAMES.get(sec_key, sec_key)
+            await query.message.edit_text(f"✅ تم بنجاح حفظ الملف ({file_info['title']}) في قسم ({sec_display})!")
+        else:
+            await query.message.edit_text("⚠️ انتهت صلاحية العملية أو لم يتم العثور على الملف. أرسل الملف من جديد.")
+
+# --- استقبال رسائل النص (للذكاء الاصطناعي أو الردود العادية) ---
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await log_activity(update, context)
+    text = update.message.text
+    if not text:
+        return
+
+    # إذا كان النص سؤالاً موجهاً للذكاء الاصطناعي وكان العميل مفعلًا
+    if gemini_client:
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=text,
+            )
+            if response and response.text:
+                await update.message.reply_text(response.text)
+                return
+        except Exception as e:
+            logging.error(f"Gemini Error: {e}")
+
+    await update.message.reply_text("أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر المتقدم 🎓")
+
+# --- دالة تشغيل البوت الرئيسية ---
+def main():
+    if not TELEGRAM_TOKEN:
+        print("Error: TELEGRAM_TOKEN is missing!")
+        return
+
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+
+    # تسجيل الأوامر
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("delete", delete_material))
+
+    # تسجيل استقبال المستندات والرسائل والأزرار
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    app.add_handler(CallbackQueryHandler(upload_section_callback, pattern="^up_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    print("Bot is up and running smoothly...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
