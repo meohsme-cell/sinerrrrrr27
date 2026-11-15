@@ -33,6 +33,8 @@ def init_db():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, section TEXT, title TEXT, file_id TEXT);''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS user_logs (id SERIAL PRIMARY KEY, user_id BIGINT, username TEXT, full_name TEXT, msg_type TEXT, content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);''')
+        # جدول لتخزين الملف المعلق في قاعدة البيانات لضمان عدم انتهاء صلاحيته
+        cursor.execute('''CREATE TABLE IF NOT EXISTS pending_uploads (owner_id BIGINT PRIMARY KEY, file_id TEXT, title TEXT);''')
         conn.commit()
         cursor.close()
         conn.close()
@@ -68,6 +70,19 @@ def get_material_by_id(mat_id):
         return None
     except: return None
 
+def add_material_to_db(section, title, file_id):
+    sec = section.strip().lower()
+    try:
+        conn = get_db()
+        if not conn: return
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO materials (section, title, file_id) VALUES (%s, %s, %s)", (sec, title, file_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        logging.error(f"DB Add Error: {e}")
+
 def delete_material_from_db(file_id):
     try:
         conn = get_db()
@@ -80,6 +95,42 @@ def delete_material_from_db(file_id):
         conn.close()
         return deleted
     except: return False
+
+def save_pending_to_db(owner_id, file_id, title):
+    try:
+        conn = get_db()
+        if not conn: return
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO pending_uploads (owner_id, file_id, title) VALUES (%s, %s, %s) ON CONFLICT (owner_id) DO UPDATE SET file_id = EXCLUDED.file_id, title = EXCLUDED.title", (owner_id, file_id, title))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except: pass
+
+def get_pending_from_db(owner_id):
+    try:
+        conn = get_db()
+        if not conn: return None
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_id, title FROM pending_uploads WHERE owner_id = %s", (owner_id,))
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if row:
+            return {"file_id": row[0], "title": row[1]}
+        return None
+    except: return None
+
+def clear_pending_from_db(owner_id):
+    try:
+        conn = get_db()
+        if not conn: return
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM pending_uploads WHERE owner_id = %s", (owner_id,))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except: pass
 
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -98,7 +149,6 @@ def run_server():
 Thread(target=run_server, daemon=True).start()
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
-pending_files = {}
 
 SECTION_NAMES = {
     "math": "الرياضيات",
@@ -134,10 +184,7 @@ DUAS_LIST = (
 )
 
 async def post_init(application):
-    # تعيين زر "القائمة" وأوامر البوت تلقائياً لدى تيليجرام
-    commands = [
-        BotCommand("start", "تشغيل البوت وعرض مواد الصف الثاني عشر 🎓"),
-    ]
+    commands = [BotCommand("start", "تشغيل البوت وعرض مواد الصف الثاني عشر 🎓")]
     await application.bot.set_my_commands(commands)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -285,7 +332,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = update.message
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
-        pending_files[user_id] = {"file_id": file_id, "title": title}
+        
+        # حفظ الملف المعلق في قاعدة البيانات لضمان عدم انتهاء صلاحيته أبداً
+        save_pending_to_db(user_id, file_id, title)
         
         keyboard = [
             [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
@@ -308,12 +357,12 @@ async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_
     
     if data.startswith("up_"):
         sec_key = data.replace("up_", "")
-        file_info = pending_files.get(OWNER_ID)
+        file_info = get_pending_from_db(OWNER_ID)
         if file_info:
             add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
             sec_title = SECTION_NAMES.get(sec_key, sec_key)
             await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
-            pending_files.pop(OWNER_ID, None)
+            clear_pending_from_db(OWNER_ID)
         else:
             await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
 
@@ -328,7 +377,7 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
 
-    print("Bot with Menu and File selection is running smoothly...")
+    print("Bot is running perfectly with persistent pending uploads...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
