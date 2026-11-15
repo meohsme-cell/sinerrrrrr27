@@ -122,7 +122,6 @@ SECTION_NAMES = {
     "physics": "الفيزياء",
     "duas": "أدعية وأذكار",
     "schedules": "الجداول الدراسية",
-    # أقسام الهياكل الدراسية
     "struct_math": "هيكل الرياضيات",
     "struct_chemistry": "هيكل الكيمياء",
     "struct_biology": "هيكل الأحياء",
@@ -167,7 +166,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"خطأ: {e}")
             return
 
-    # واجهة البوت الأصلية تماماً مع زر الهياكل وشعار المدرسة في الأسفل
+    # واجهة البوت مع زر الهياكل وشعار المدرسة في الأسفل وتعديل التسمية
     keyboard = [
         [InlineKeyboardButton("رياضيات", callback_data="sec_math"), InlineKeyboardButton("كيمياء", callback_data="sec_chemistry")],
         [InlineKeyboardButton("أحياء", callback_data="sec_biology"), InlineKeyboardButton("إنجليزي", callback_data="sec_english")],
@@ -179,7 +178,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        "أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر المتقدم 🎓",
+        "أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر 🎓",
         reply_markup=reply_markup
     )
 
@@ -217,7 +216,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "open_structures":
-        # فتح قائمة الهياكل الفرعية عند الضغط على زر الهياكل الدراسية
         struct_keyboard = [
             [InlineKeyboardButton("هيكل رياضيات", callback_data="sec_struct_math"), InlineKeyboardButton("هيكل كيمياء", callback_data="sec_struct_chemistry")],
             [InlineKeyboardButton("هيكل أحياء", callback_data="sec_struct_biology"), InlineKeyboardButton("هيكل إنجليزي", callback_data="sec_struct_english")],
@@ -237,7 +235,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("الجداول الدراسية", callback_data="sec_schedules"), InlineKeyboardButton("📁 الهياكل الدراسية", callback_data="open_structures")],
             [InlineKeyboardButton("🎓 Senior27 | Al Falah Academy | MBZ 🇦🇪", callback_data="batch_badge")]
         ]
-        await query.message.edit_text("أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر المتقدم 🎓", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.message.edit_text("أهلاً بك! استخدم القائمة الرئيسية لتصفح مواد الصف الثاني عشر 🎓", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
     if data.startswith("sec_"):
@@ -258,7 +256,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_document(chat_id=query.message.chat_id, document=item["file_id"], caption=item["title"])
             except: pass
 
-# معالجة رفع الملفات من قناتك أو رسائلك وتحديد أين تذهب (مواد أو هياكل)
+# معالجة رفع الملفات وتصنيفها
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
     
@@ -266,66 +264,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
-    # إذا أرسلت أنت (المالك) ملفاً أو صورة (سواء من قناتك المرتبطة أو الخاص)، يسألك البوت أين تضعه
     if user_id == OWNER_ID and update.message and (update.message.document or update.message.photo):
         msg = update.message
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         pending_files[user_id] = {"file_id": file_id, "title": title}
         
-        # أزرار اختيار القسم بدقة (مواد عادية أو هياكل)
         keyboard = [
             [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
             [InlineKeyboardButton("📁 أحياء", callback_data="up_biology"), InlineKeyboardButton("📁 إنجليزي", callback_data="up_english")],
             [InlineKeyboardButton("📁 إسلامية", callback_data="up_islamic"), InlineKeyboardButton("📁 عربي", callback_data="up_arabic")],
             [InlineKeyboardButton("📁 فيزياء", callback_data="up_physics"), InlineKeyboardButton("📁 الجداول", callback_data="up_schedules")],
-            # أزرار الهياكل الدراسية المخصصة
             [InlineKeyboardButton("📑 هيكل رياضيات", callback_data="up_struct_math"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data="up_struct_chemistry")],
             [InlineKeyboardButton("📑 هيكل أحياء", callback_data="up_struct_biology"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data="up_struct_english")],
             [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
             [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
         ]
-        await msg.reply_text("🎯 **تم استلام الملف بنجاح!**\nاختر القسم المناسب أو الهيكل لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-        return
-
-    # تفاعل الذكاء الاصطناعي للطلاب
-    if update.message and update.message.text and gemini_client:
-        try:
-            response = gemini_client.models.generate_content(model="gemini-2.5-flash", contents=update.message.text)
-            if response and response.text:
-                await update.message.reply_text(response.text)
-        except: pass
-
-async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.from_user.id != OWNER_ID: return
-    data = query.data
-    
-    if data.startswith("up_"):
-        sec_key = data.replace("up_", "")
-        file_info = pending_files.get(OWNER_ID)
-        if file_info:
-            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
-            sec_title = SECTION_NAMES.get(sec_key, sec_key)
-            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
-            pending_files.pop(OWNER_ID, None)
-        else:
-            await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
-
-def main():
-    token = os.getenv("TELEGRAM_TOKEN")
-    if not token: return
-    application = ApplicationBuilder().token(token).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("delete", delete_material_command))
-    application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
-    application.add_handler(CallbackQueryHandler(handle_callback))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
-
-    print("Bot is fully running with Structures and Channels support...")
-    application.run_polling(drop_pending_updates=True)
-
-if __name__ == "__main__":
-    main()
+        await msg.reply
