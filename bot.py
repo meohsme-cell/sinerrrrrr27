@@ -30,9 +30,10 @@ if GEMINI_API_KEY:
 
 # --- الصلاحيات والإداريين ---
 OWNER_ID = 1329113404        # آيدي المالك (أنت)
-ADMIN_ID = 1110343074        # آيدي المشرف المضاف حديثاً
+ADMIN_ID = 1110343074        # آيدي المشرف المضاف
 
-SECRET_ADMIN_KEY = "mpol90mpol90@888"
+# كلمة السر الخاصة بفتح لوحة الإدارة
+SECRET_ADMIN_KEY = "mpol90mpol90@M7"
 
 def get_db():
     if not DATABASE_URL:
@@ -77,7 +78,7 @@ try:
 except Exception as e:
     print(f"Database Init Error: {e}")
 
-# --- 2. دوال التعامل مع قاعدة البيانات ---
+# --- 2. دوال التعامل مع قاعدة البيانات والاحصائيات ---
 def add_material_to_db(section, title, file_id):
     sec = section.strip().lower()
     try:
@@ -120,6 +121,28 @@ def delete_material_from_db(file_id):
     except Exception as e:
         logging.error(f"Error deleting material: {e}")
         return False
+
+def get_bot_stats():
+    try:
+        conn = get_db()
+        if not conn: return 0, 0, 0
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT COUNT(DISTINCT user_id) FROM user_logs;")
+        users_count = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT COUNT(*) FROM user_logs;")
+        interactions_count = cursor.fetchone()[0] or 0
+        
+        cursor.execute("SELECT COUNT(*) FROM materials;")
+        materials_count = cursor.fetchone()[0] or 0
+        
+        cursor.close()
+        conn.close()
+        return users_count, interactions_count, materials_count
+    except Exception as e:
+        logging.error(f"Error getting stats: {e}")
+        return 0, 0, 0
 
 # --- 3. خادم السيرفر لـ Render ---
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -218,7 +241,7 @@ async def log_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error saving log: {e}")
 
-# --- 5. أوامر البوت والتفاعل ---
+# --- 5. أمر البدء العادي (للجميع) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await log_activity(update, context)
     user_name = update.effective_user.first_name if update.effective_user and update.effective_user.first_name else "طالب"
@@ -247,18 +270,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.callback_query.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# --- 6. أمر الحذف الخاص بالإدارة (المالك + المشرف المعتمد) ---
+# --- 6. أمر التحقق بكلمة السر للإدارة (/admin كلمة_السر) ---
+async def admin_login_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # التحقق هل المستخدم هو المالك أو المشرف المعتمد
+    if user_id != OWNER_ID and user_id != ADMIN_ID:
+        await update.message.reply_text("⚠️ عذراً، هذا الأمر غير متاح لك.")
+        return
+
+    # التحقق من إدخال كلمة السر مع الأمر
+    if not context.args or context.args[0] != SECRET_ADMIN_KEY:
+        await update.message.reply_text("❌ كلمة السر غير صحيحة أو ناقصة.\nالاستخدام الصحيح:\n`/admin mpol90mpol90@M7`", parse_mode="Markdown")
+        return
+
+    # إذا كانت كلمة السر صحيحة، نعرض له إحصائيات البوت ولوحة الإدارة
+    users_count, interactions_count, materials_count = get_bot_stats()
+    stats_text = (
+        "📊 **لوحة تحكم وإحصائيات البوت السحابية (الإدارة):**\n\n"
+        f"👥 **عدد المستخدمين:** {users_count}\n"
+        f"💬 **إجمالي التفاعلات:** {interactions_count}\n"
+        f"📚 **إجمالي الملفات المخزنة:** {materials_count}\n\n"
+        "🗑️ لحذف أي ملف خاطئ، استخدم الأمر متبوعاً برقم الـ ID:\n"
+        "`/delete [رقم_الملف]`"
+    )
+    await update.message.reply_text(stats_text, parse_mode="Markdown")
+
+# --- 7. أمر الحذف الخاص بالإدارة ---
 async def delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # التحقق مما إذا كان المستخدم هو المالك أو المشرف المضاف فقط
     if user_id != OWNER_ID and user_id != ADMIN_ID:
         await update.message.reply_text("⚠️ عذراً، هذا الأمر مخصص للإدارة فقط.")
         return
 
-    # التحقق من وجود رقم الملف المراد حذفه
     if not context.args:
-        # عرض قائمة الملفات المختصرة لتسهيل معرفة الأرقام على الإدارة
         all_materials_text = "🗑️ **قائمة الملفات المخزنة للحذف:**\n\n"
         total_count = 0
         for sec_key in SECTION_NAMES.keys():
@@ -271,9 +317,8 @@ async def delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("📭 لا توجد أي ملفات مخزنة في البوت حالياً.")
             return
 
-        all_materials_text += f"\n📌 للاستخدام الصحيح، اكتب الأمر متبوعاً برقم الملف:\n`/delete [رقم_الملف]`"
+        all_materials_text += f"\n📌 للاستخدام، اكتب الأمر متبوعاً برقم الملف:\n`/delete [رقم_الملف]`"
         
-        # إذا كانت الرسالة طويلة، نقسمها أو نرسلها
         if len(all_materials_text) > 4000:
             await update.message.reply_text("القائمة طويلة جداً، يرجى كتابة الأمر مع رقم الملف مباشرة، مثال: `/delete 5`")
         else:
@@ -286,7 +331,7 @@ async def delete_material(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if success:
             await update.message.reply_text(f"✅ تم حذف الملف برقم `ID: {file_id_to_delete}` بنجاح دون المساس بباقي الملفات.", parse_mode="Markdown")
         else:
-            await update.message.reply_text(f"❌ لم يتم العثور على ملف بهذا الرقم (`ID: {file_id_to_delete}`). تأكد من الرقم الصحيح.")
+            await update.message.reply_text(f"❌ لم يتم العثور على ملف بهذا الرقم (`ID: {file_id_to_delete}`).")
     except ValueError:
         await update.message.reply_text("⚠️ يرجى كتابة رقم صحيح بعد الأمر. مثال: `/delete 12`")
 
@@ -335,13 +380,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             keyboard = [[InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_home")]]
             
-            # إذا كانت الملفات كثيرة، نرسل الرسالة أو نعدلها
             try:
                 await query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
             except Exception:
                 await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-            # إرسال الملفات الفعلية المرفوعة للقسم لكي يتمكن الطلاب من تحميلها
             if materials:
                 for m in materials:
                     try:
@@ -373,7 +416,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await message.reply_text(f"📁 تم استلام الملف: `{file_name}`\n\nالرجاء اختيار القسم الذي تريد رفع الملف إليه:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
-async/def upload_section_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def upload_section_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -392,14 +435,13 @@ async/def upload_section_callback(update: Update, context: ContextTypes.DEFAULT_
         else:
             await query.message.edit_text("⚠️ انتهت صلاحية العملية أو لم يتم العثور على الملف. أرسل الملف من جديد.")
 
-# --- استقبال رسائل النص (للذكاء الاصطناعي أو الردود العادية) ---
+# --- استقبال رسائل النص ---
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await log_activity(update, context)
     text = update.message.text
     if not text:
         return
 
-    # إذا كان النص سؤالاً موجهاً للذكاء الاصطناعي وكان العميل مفعلًا
     if gemini_client:
         try:
             response = gemini_client.models.generate_content(
@@ -424,9 +466,10 @@ def main():
 
     # تسجيل الأوامر
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("admin", admin_login_command))
     app.add_handler(CommandHandler("delete", delete_material))
 
-    # تسجيل استقبال المستندات والرسائل والأزرار
+    # تسجيل التفاعلات
     app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     app.add_handler(CallbackQueryHandler(upload_section_callback, pattern="^up_"))
     app.add_handler(CallbackQueryHandler(button_handler))
