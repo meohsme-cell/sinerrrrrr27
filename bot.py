@@ -33,7 +33,8 @@ def init_db():
         cursor = conn.cursor()
         cursor.execute('''CREATE TABLE IF NOT EXISTS materials (id SERIAL PRIMARY KEY, section TEXT, title TEXT, file_id TEXT);''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS user_logs (id SERIAL PRIMARY KEY, user_id BIGINT, username TEXT, full_name TEXT, msg_type TEXT, content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);''')
-        cursor.execute('''CREATE TABLE IF NOT EXISTS pending_uploads (owner_id BIGINT PRIMARY KEY, file_id TEXT, title TEXT);''')
+        # جدول الملفات المعلقة يعتمد على file_unique_id ليدعم إرسال عدة ملفات معاً بدون أي تداخل
+        cursor.execute('''CREATE TABLE IF NOT EXISTS pending_uploads (unique_id TEXT PRIMARY KEY, owner_id BIGINT, file_id TEXT, title TEXT);''')
         conn.commit()
         cursor.close()
         conn.close()
@@ -101,14 +102,14 @@ def delete_material_from_db(file_id):
     except Exception:
         return False
 
-def save_pending_to_db(owner_id, file_id, title):
+def save_pending_to_db(unique_id, owner_id, file_id, title):
     try:
         conn = get_db()
         if not conn: return
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO pending_uploads (owner_id, file_id, title) VALUES (%s, %s, %s) ON CONFLICT (owner_id) DO UPDATE SET file_id = EXCLUDED.file_id, title = EXCLUDED.title",
-            (owner_id, file_id, title)
+            "INSERT INTO pending_uploads (unique_id, owner_id, file_id, title) VALUES (%s, %s, %s, %s) ON CONFLICT (unique_id) DO UPDATE SET file_id = EXCLUDED.file_id, title = EXCLUDED.title",
+            (unique_id, owner_id, file_id, title)
         )
         conn.commit()
         cursor.close()
@@ -116,12 +117,12 @@ def save_pending_to_db(owner_id, file_id, title):
     except Exception:
         pass
 
-def get_pending_from_db(owner_id):
+def get_pending_from_db(unique_id):
     try:
         conn = get_db()
         if not conn: return None
         cursor = conn.cursor()
-        cursor.execute("SELECT file_id, title FROM pending_uploads WHERE owner_id = %s", (owner_id,))
+        cursor.execute("SELECT file_id, title FROM pending_uploads WHERE unique_id = %s", (unique_id,))
         row = cursor.fetchone()
         cursor.close()
         conn.close()
@@ -131,12 +132,12 @@ def get_pending_from_db(owner_id):
     except Exception:
         return None
 
-def clear_pending_from_db(owner_id):
+def clear_pending_from_db(unique_id):
     try:
         conn = get_db()
         if not conn: return
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM pending_uploads WHERE owner_id = %s", (owner_id,))
+        cursor.execute("DELETE FROM pending_uploads WHERE unique_id = %s", (unique_id,))
         conn.commit()
         cursor.close()
         conn.close()
@@ -267,23 +268,6 @@ async def process_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(text, parse_mode="Markdown")
 
-async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.from_user.id not in [OWNER_ID, ADMIN_ID]: return
-    data = query.data
-    
-    if data.startswith("up_"):
-        sec_key = data.replace("up_", "")
-        file_info = get_pending_from_db(query.from_user.id)
-        if file_info:
-            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
-            sec_title = SECTION_NAMES.get(sec_key, sec_key)
-            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
-            clear_pending_from_db(query.from_user.id)
-        else:
-            await query.message.edit_text("⚠️ انتهت صلاحية الملف أو تم حفظه مسبقاً، أرسله مرة أخرى من فضلك.")
-
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -357,6 +341,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("⚠️ حدث خطأ أثناء إرسال الملف.")
         return
 
+    # معالجة حفظ الملف باستخدام unique_id الخاص به لكل زر
+    if data.startswith("up_"):
+        parts = data.split("_", 2)
+        if len(parts) == 3:
+            sec_key = parts[1]
+            unique_id = parts[2]
+            file_info = get_pending_from_db(unique_id)
+            if file_info:
+                add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+                sec_title = SECTION_NAMES.get(sec_key, sec_key)
+                await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
+                clear_pending_from_db(unique_id)
+            else:
+                await query.message.edit_text("⚠️ انتهت صلاحية هذا الملف أو تم حفظه مسبقاً.")
+
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -387,22 +386,26 @@ async def handle_document_message(update: Update, context: ContextTypes.DEFAULT_
 
     if user_id in [OWNER_ID, ADMIN_ID]:
         msg = update.message
-        file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
+        file_obj = msg.document if msg.document else msg.photo[-1]
+        file_id = file_obj.file_id
+        unique_id = file_obj.file_unique_id  # معرف فريد لكل ملف على حدة
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
         
-        save_pending_to_db(user_id, file_id, title)
+        # حفظ كل ملف مع معرّفه الفريد في قاعدة البيانات
+        save_pending_to_db(unique_id, user_id, file_id, title)
         
+        # ربط الأزرار بالمعرف الفريد للملف لتجنب التداخل نهائياً
         keyboard = [
-            [InlineKeyboardButton("📁 رياضيات", callback_data="up_math"), InlineKeyboardButton("📁 كيمياء", callback_data="up_chemistry")],
-            [InlineKeyboardButton("📁 أحياء", callback_data="up_biology"), InlineKeyboardButton("📁 إنجليزي", callback_data="up_english")],
-            [InlineKeyboardButton("📁 إسلامية", callback_data="up_islamic"), InlineKeyboardButton("📁 عربي", callback_data="up_arabic")],
-            [InlineKeyboardButton("📁 فيزياء", callback_data="up_physics"), InlineKeyboardButton("📁 الجداول", callback_data="up_schedules")],
-            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data="up_struct_math"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data="up_struct_chemistry")],
-            [InlineKeyboardButton("📑 هيكل أحياء", callback_data="up_struct_biology"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data="up_struct_english")],
-            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
-            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
+            [InlineKeyboardButton("📁 رياضيات", callback_data=f"up_math_{unique_id}"), InlineKeyboardButton("📁 كيمياء", callback_data=f"up_chemistry_{unique_id}")],
+            [InlineKeyboardButton("📁 أحياء", callback_data=f"up_biology_{unique_id}"), InlineKeyboardButton("📁 إنجليزي", callback_data=f"up_english_{unique_id}")],
+            [InlineKeyboardButton("📁 إسلامية", callback_data=f"up_islamic_{unique_id}"), InlineKeyboardButton("📁 عربي", callback_data=f"up_arabic_{unique_id}")],
+            [InlineKeyboardButton("📁 فيزياء", callback_data=f"up_physics_{unique_id}"), InlineKeyboardButton("📁 الجداول", callback_data=f"up_schedules_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل رياضيات", callback_data=f"up_struct_math_{unique_id}"), InlineKeyboardButton("📑 هيكل كيمياء", callback_data=f"up_struct_chemistry_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل أحياء", callback_data=f"up_struct_biology_{unique_id}"), InlineKeyboardButton("📑 هيكل إنجليزي", callback_data=f"up_struct_english_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل إسلامية", callback_data=f"up_struct_islamic_{unique_id}"), InlineKeyboardButton("📑 هيكل عربية", callback_data=f"up_struct_arabic_{unique_id}")],
+            [InlineKeyboardButton("📑 هيكل فيزياء", callback_data=f"up_struct_physics_{unique_id}")]
         ]
-        await msg.reply_text("🎯 **تم استلام الملف بنجاح وتخزينه في قائمة الانتظار!**\nاختر القسم المناسب لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        await msg.reply_text(f"🎯 **تم استلام الملف ({title}) بنجاح!**\nاختر القسم المناسب لتخزينه فيه:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
         return
 
 def main():
@@ -412,7 +415,6 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("delete", process_delete))
-    application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_message))
     application.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_document_message))
