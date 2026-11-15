@@ -1,7 +1,6 @@
 import os
 import logging
 import psycopg2
-from google import genai
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -14,18 +13,10 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# --- إعداد الاتصال بقاعدة البيانات ---
+# --- إعداد الاتصال بقاعدة البيانات السحابية بأمان ---
 DATABASE_URL = os.getenv("DATABASE_URL")
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-gemini_client = None
-if GEMINI_API_KEY:
-    try:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        print(f"Gemini Init Error: {e}")
 
 OWNER_ID = 1329113404
 ADMIN_ID = 1110343074
@@ -91,7 +82,7 @@ def delete_material_from_db(file_id):
         return deleted
     except: return False
 
-# --- سيرفر Render الحفاظ على الاتصال ---
+# --- سيرفر Render للحفاظ على نشاط البوت ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -111,7 +102,7 @@ Thread(target=run_server, daemon=True).start()
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 pending_files = {}
 
-# أسماء الأقسام العادية وأقسام الهياكل
+# جدول الأقسام الشامل (المواد والهياكل) لضمان عدم ضياع أي تصنيف
 SECTION_NAMES = {
     "math": "الرياضيات",
     "chemistry": "الكيمياء",
@@ -148,7 +139,7 @@ DUAS_LIST = (
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
     
-    # لوحة تحكم المالك بكلمة السر
+    # لوحة تحكم المالك وسجلات الأنشطة
     if user_id == OWNER_ID and context.args and context.args[0] == SECRET_ADMIN_KEY:
         try:
             conn = get_db()
@@ -163,10 +154,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(logs_text[:4000], parse_mode="Markdown")
             return
         except Exception as e:
-            await update.message.reply_text(f"خطأ: {e}")
+            await update.message.reply_text(f"خطأ في جلب السجلات: {e}")
             return
 
-    # واجهة البوت مع زر الهياكل وشعار المدرسة في الأسفل وتعديل التسمية
+    # الواجهة الرئيسية المنظمة للصف الثاني عشر
     keyboard = [
         [InlineKeyboardButton("رياضيات", callback_data="sec_math"), InlineKeyboardButton("كيمياء", callback_data="sec_chemistry")],
         [InlineKeyboardButton("أحياء", callback_data="sec_biology"), InlineKeyboardButton("إنجليزي", callback_data="sec_english")],
@@ -182,13 +173,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# أمر الحذف السريع لصديقك أو لك
+# أمر حذف الملفات المخصص لصديقك أو لك (يعرض كافة الملفات القديمة والجديدة بأرقامها)
 async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
     if user_id not in [OWNER_ID, ADMIN_ID]: return
 
     if not context.args:
-        text = "📋 **قائمة الملفات المسجلة وأرقامها (للحذف):**\n\n"
+        text = "📋 **قائمة كافة الملفات المسجلة وأرقامها (للحذف الدقيق):**\n\n"
         for sec_key, sec_title in SECTION_NAMES.items():
             items = get_materials_from_db(sec_key)
             if items:
@@ -196,20 +187,20 @@ async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_
                 for item in items:
                     text += f"  - رقم (`{item['id']}`): {item['title']}\n"
                 text += "\n"
-        text += "⚠️ للحذف أرسل هكذا:\n`/delete [رقم_الملف]`"
+        text += "⚠️ للحذف، أرسل الأمر متبوعاً برقم الملف هكذا:\n`/delete [رقم_الملف]`"
         await update.message.reply_text(text, parse_mode="Markdown")
         return
 
     try:
         file_id = int(context.args[0])
         if delete_material_from_db(file_id):
-            await update.message.reply_text(f"✅ تم حذف الملف رقم `{file_id}` بنجاح.", parse_mode="Markdown")
+            await update.message.reply_text(f"✅ تم حذف الملف رقم `{file_id}` بنجاح تام.", parse_mode="Markdown")
         else:
             await update.message.reply_text(f"⚠️ لم يتم العثور على الملف رقم `{file_id}`.")
     except ValueError:
         await update.message.reply_text("⚠️ يرجى كتابة رقم صحيح بعد الأمر.")
 
-# معالجة الأزرار (المواد، الهياكل، القوائم الفرعية)
+# معالجة الأزرار والقوائم الفرعية
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -256,7 +247,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_document(chat_id=query.message.chat_id, document=item["file_id"], caption=item["title"])
             except: pass
 
-# معالجة رفع الملفات وتصنيفها
+# معالجة الرسائل والملفات القادمة من القناة أو الخاص لتخزينها بدقة
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
     
@@ -264,6 +255,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
 
+    # إذا أرسلت أنت (المالك) ملفاً أو صورة في القناة أو الخاص، يمنحك خيارات دقيقة للحفظ
     if user_id == OWNER_ID and update.message and (update.message.document or update.message.photo):
         msg = update.message
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
@@ -280,4 +272,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("📑 هيكل إسلامية", callback_data="up_struct_islamic"), InlineKeyboardButton("📑 هيكل عربية", callback_data="up_struct_arabic")],
             [InlineKeyboardButton("📑 هيكل فيزياء", callback_data="up_struct_physics")]
         ]
-        await msg.reply
+        await msg.reply_text("🎯 **تم استلام الملف بنجاح!**\nاختر القسم المناسب أو الهيكل لتخزين هذا الملف فيه مباشرة:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+        return
+
+async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != OWNER_ID: return
+    data = query.data
+    
+    if data.startswith("up_"):
+        sec_key = data.replace("up_", "")
+        file_info = pending_files.get(OWNER_ID)
+        if file_info:
+            add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
+            sec_title = SECTION_NAMES.get(sec_key, sec_key)
+            await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
+            pending_files.pop(OWNER_ID, None)
+        else:
+            await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
+
+def main():
+    token = os.getenv("TELEGRAM_TOKEN")
+    if not token: return
+    application = ApplicationBuilder().token(token).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("delete", delete_material_command))
+    application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
+
+    print("Professional Bot is running smoothly...")
+    application.run_polling(drop_pending_updates=True)
+
+if __name__ == "__main__":
+    main()
