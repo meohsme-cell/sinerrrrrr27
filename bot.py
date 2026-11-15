@@ -195,7 +195,7 @@ async def post_init(application):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
     
-    if user_id == OWNER_ID and context.args and context.args[0] == SECRET_ADMIN_KEY:
+    if user_id in [OWNER_ID, ADMIN_ID] and context.args and context.args[0] == SECRET_ADMIN_KEY:
         try:
             conn = get_db()
             cursor = conn.cursor()
@@ -227,9 +227,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # إذا لم يكتب رقم بعد الأمر، اعرض له كافة الملفات مرتبة حسب الأقسام
-    if not context.args:
+async def process_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id if update.effective_user else 0
+    if user_id not in [OWNER_ID, ADMIN_ID]:
+        await update.message.reply_text("⚠️ عذراً، هذا الأمر مخصص للمسؤولين فقط.")
+        return
+
+    args = context.args
+    if not args and update.message and update.message.text:
+        parts = update.message.text.split()
+        if len(parts) > 1:
+            args = parts[1:]
+
+    if not args:
         text = "📋 **قائمة كافة الملفات مرتبة حسب الأقسام والمواد (للحذف):**\n\n"
         has_items = False
         
@@ -255,9 +265,8 @@ async def delete_material_command(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(text, parse_mode="Markdown")
         return
 
-    # إذا أرسل رقم بعد الأمر (مثال: /delete 3)
     try:
-        file_id = int(context.args[0])
+        file_id = int(args[0])
         if delete_material_from_db(file_id):
             await update.message.reply_text(f"✅ تم حذف الملف رقم `{file_id}` بنجاح.", parse_mode="Markdown")
         else:
@@ -340,12 +349,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id if update.effective_user else 0
-    
-    if user_id == OWNER_ID and update.message and update.message.text == SECRET_ADMIN_KEY:
+    text = update.message.text if update.message and update.message.text else ""
+
+    # دعم إضافي لكتابة del أو /delete كرسالة نصية عادية إذا علق أمر تيليجرام
+    if user_id in [OWNER_ID, ADMIN_ID] and (text.lower().startswith("/delete") or text.lower().startswith("del")):
+        parts = text.split()
+        if len(parts) > 1:
+            context.args = parts[1:]
+        else:
+            context.args = []
+        await process_delete(update, context)
+        return
+
+    if user_id in [OWNER_ID, ADMIN_ID] and text == SECRET_ADMIN_KEY:
         await start(update, context)
         return
 
-    if user_id == OWNER_ID and update.message and (update.message.document or update.message.photo):
+    if user_id in [OWNER_ID, ADMIN_ID] and update.message and (update.message.document or update.message.photo):
         msg = update.message
         file_id = msg.document.file_id if msg.document else msg.photo[-1].file_id
         title = msg.caption or (msg.document.file_name if msg.document else "ملف دراسي")
@@ -368,17 +388,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_upload_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    if query.from_user.id != OWNER_ID: return
+    if query.from_user.id not in [OWNER_ID, ADMIN_ID]: return
     data = query.data
     
     if data.startswith("up_"):
         sec_key = data.replace("up_", "")
-        file_info = get_pending_from_db(OWNER_ID)
+        file_info = get_pending_from_db(query.from_user.id)
         if file_info:
             add_material_to_db(sec_key, file_info["title"], file_info["file_id"])
             sec_title = SECTION_NAMES.get(sec_key, sec_key)
             await query.message.edit_text(f"✅ **تم حفظ الملف بنجاح في قسم ({sec_title})!**", parse_mode="Markdown")
-            clear_pending_from_db(OWNER_ID)
+            clear_pending_from_db(query.from_user.id)
         else:
             await query.message.edit_text("⚠️ انتهت صلاحية الملف، أرسله مرة أخرى من فضلك.")
 
@@ -388,7 +408,7 @@ def main():
     application = ApplicationBuilder().token(token).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("delete", delete_material_command))
+    application.add_handler(CommandHandler("delete", process_delete))
     application.add_handler(CallbackQueryHandler(handle_upload_selection, pattern="^up_"))
     application.add_handler(CallbackQueryHandler(handle_callback))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
